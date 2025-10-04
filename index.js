@@ -1,1172 +1,973 @@
-// Cloudflare Workers Task Management System
-// Main entry point for the application
+// ⚠️ 重要提示：此 Worker 需要绑定一个名为 R2_BUCKET 的 R2 存储桶。
+// 如果未绑定 R2 存储桶，Worker 将无法正常工作。
 
-const indexHtmlContent = `<!DOCTYPE html>
-<html lang="zh-CN">
-<head>
-    <meta charset="UTF-8">
-    <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>Workers TaskFlow</title>
-    <link rel="stylesheet" href="styles.css">
-</head>
-<body>
-    <header>
-        <h1>Workers TaskFlow</h1>
-        <div id="user-info"></div>
-    </header>
-
-    <main>
-        <section id="tasks-section">
-            <h2>任务管理</h2>
-            <div id="task-form-container">
-                <form id="task-form">
-                    <input type="hidden" id="task-id">
-                    <div>
-                        <label for="task-title">标题:</label>
-                        <input type="text" id="task-title" required>
-                    </div>
-                    <div>
-                        <label for="task-description">描述:</label>
-                        <textarea id="task-description"></textarea>
-                    </div>
-                    <div>
-                        <label for="task-status">状态:</label>
-                        <select id="task-status">
-                            <option value="To Do">待办</option>
-                            <option value="In Progress">进行中</option>
-                            <option value="Completed">已完成</option>
-                        </select>
-                    </div>
-                    <div>
-                        <label for="task-progress">进度:</label>
-                        <input type="range" id="task-progress" min="0" max="100" value="0">
-                        <span id="progress-value">0%</span>
-                    </div>
-                    <div>
-                        <label for="task-due-date">截止日期:</label>
-                        <input type="date" id="task-due-date">
-                    </div>
-                    <button type="submit">保存任务</button>
-                    <button type="button" id="cancel-edit">取消</button>
-                </form>
-            </div>
-            <div id="tasks-list"></div>
-        </section>
-
-        <section id="assets-section">
-            <h2>资产管理</h2>
-            <div id="asset-form-container">
-                <form id="asset-form">
-                    <input type="hidden" id="asset-id">
-                    <div>
-                        <label for="asset-name">物品名称:</label>
-                        <input type="text" id="asset-name" required>
-                    </div>
-                    <div>
-                        <label for="asset-owner">当前保管人:</label>
-                        <select id="asset-owner"></select>
-                    </div>
-                    <div>
-                        <label for="asset-image">物品图片:</label>
-                        <input type="file" id="asset-image" accept="image/*">
-                        <input type="hidden" id="asset-image-key">
-                    </div>
-                    <button type="submit">登记物品</button>
-                    <button type="button" id="cancel-asset-edit">取消</button>
-                </form>
-            </div>
-            <div id="assets-list"></div>
-        </section>
-
-        <section id="users-section" class="admin-only">
-            <h2>用户管理</h2>
-            <div id="user-form-container">
-                <form id="user-form">
-                    <div>
-                        <label for="user-username">用户名:</label>
-                        <input type="text" id="user-username" required>
-                    </div>
-                    <div>
-                        <label for="user-role">角色:</label>
-                        <select id="user-role">
-                            <option value="member">成员</option>
-                            <option value="admin">管理员</option>
-                        </select>
-                    </div>
-                    <button type="submit">添加用户</button>
-                </form>
-            </div>
-            <div id="users-list"></div>
-        </section>
-    </main>
-
-    <script src="script.js"></script>
-</body>
-</html>`;
-
-const stylesCssContent = `/* Global Styles */
-* {
-    box-sizing: border-box;
-    margin: 0;
-    padding: 0;
+// 添加一个检查确保 R2_BUCKET 已定义
+if (typeof R2_BUCKET === 'undefined') {
+  console.error('R2_BUCKET is not defined. Please bind an R2 bucket to this Worker.');
 }
 
-body {
-    font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;
-    line-height: 1.6;
-    color: #333;
-    background-color: #f4f4f4;
-}
+const SHARE_LINKS_KEY = 'admin:share_links';
+const DELETED_TODOS_KEY = 'system:deleted_todos';
+const KEPT_ITEMS_KEY = 'system:kept_items'; // 新增物品保管的 R2 键
 
-.container {
-    width: 90%;
-    max-width: 1200px;
-    margin: 0 auto;
-    padding: 20px;
-}
+// --- 核心请求处理入口 ---
 
-header {
-    background-color: #2c3e50;
-    color: white;
-    padding: 1rem;
-    display: flex;
-    justify-content: space-between;
-    align-items: center;
-}
-
-header h1 {
-    font-size: 1.8rem;
-}
-
-#user-info {
-    font-size: 1rem;
-}
-
-main {
-    display: grid;
-    grid-template-columns: 1fr;
-    gap: 20px;
-    margin: 20px 0;
-}
-
-section {
-    background-color: white;
-    padding: 20px;
-    border-radius: 5px;
-    box-shadow: 0 2px 5px rgba(0,0,0,0.1);
-}
-
-section h2 {
-    margin-bottom: 15px;
-    color: #2c3e50;
-    border-bottom: 2px solid #3498db;
-    padding-bottom: 5px;
-}
-
-/* Form Styles */
-form {
-    background-color: #ecf0f1;
-    padding: 15px;
-    border-radius: 5px;
-    margin-bottom: 20px;
-}
-
-form div {
-    margin-bottom: 15px;
-}
-
-label {
-    display: block;
-    margin-bottom: 5px;
-    font-weight: bold;
-}
-
-input, select, textarea {
-    width: 100%;
-    padding: 8px;
-    border: 1px solid #ddd;
-    border-radius: 4px;
-    font-size: 14px;
-}
-
-input[type="range"] {
-    width: 80%;
-}
-
-button {
-    background-color: #3498db;
-    color: white;
-    padding: 10px 15px;
-    border: none;
-    border-radius: 4px;
-    cursor: pointer;
-    font-size: 14px;
-    margin-right: 10px;
-}
-
-button:hover {
-    background-color: #2980b9;
-}
-
-button[type="button"] {
-    background-color: #95a5a6;
-}
-
-button[type="button"]:hover {
-    background-color: #7f8c8d;
-}
-
-#progress-value {
-    display: inline-block;
-    width: 20%;
-    text-align: center;
-    font-weight: bold;
-}
-
-/* List Styles */
-.task-item, .asset-item, .user-item {
-    background-color: #f8f9fa;
-    border: 1px solid #dee2e6;
-    border-radius: 5px;
-    padding: 15px;
-    margin-bottom: 10px;
-}
-
-.task-item h3, .asset-item h3, .user-item h3 {
-    margin-bottom: 10px;
-    color: #2c3e50;
-}
-
-.task-item p, .asset-item p, .user-item p {
-    margin-bottom: 8px;
-}
-
-.task-actions, .asset-actions, .user-actions {
-    margin-top: 10px;
-}
-
-.task-actions button, .asset-actions button, .user-actions button {
-    padding: 5px 10px;
-    font-size: 12px;
-    margin-right: 5px;
-}
-
-.delete-btn {
-    background-color: #e74c3c;
-}
-
-.delete-btn:hover {
-    background-color: #c0392b;
-}
-
-.edit-btn {
-    background-color: #f39c12;
-}
-
-.edit-btn:hover {
-    background-color: #d35400;
-}
-
-.transfer-btn {
-    background-color: #9b59b6;
-}
-
-.transfer-btn:hover {
-    background-color: #8e44ad;
-}
-
-/* Progress Bar */
-.progress-container {
-    width: 100%;
-    background-color: #ecf0f1;
-    border-radius: 5px;
-    margin: 10px 0;
-}
-
-.progress-bar {
-    height: 20px;
-    background-color: #3498db;
-    border-radius: 5px;
-    text-align: center;
-    line-height: 20px;
-    color: white;
-    font-size: 12px;
-}
-
-/* Asset Image */
-.asset-image {
-    max-width: 200px;
-    max-height: 200px;
-    margin: 10px 0;
-    border: 1px solid #ddd;
-    border-radius: 5px;
-}
-
-/* Admin Only Section */
-.admin-only {
-    display: none;
-}
-
-.admin-only.visible {
-    display: block;
-}
-
-/* Responsive Design */
-@media (min-width: 768px) {
-    main {
-        grid-template-columns: 1fr 1fr;
-    }
-    
-    #users-section {
-        grid-column: span 2;
-    }
-}
-`;
-
-const scriptJsContent = `// Client-side JavaScript for Workers TaskFlow
-// Handle API interactions and UI updates
-
-// Global variables
-let currentUser = null;
-let users = [];
-
-// DOM Elements
-const taskForm = document.getElementById('task-form');
-const assetForm = document.getElementById('asset-form');
-const userForm = document.getElementById('user-form');
-const tasksList = document.getElementById('tasks-list');
-const assetsList = document.getElementById('assets-list');
-const usersList = document.getElementById('users-list');
-const userInfo = document.getElementById('user-info');
-const usersSection = document.getElementById('users-section');
-
-// Initialize the application
-document.addEventListener('DOMContentLoaded', async () => {
-    // Extract token from URL
-    const pathParts = window.location.pathname.split('/');
-    const token = pathParts[2];
-    // The role is no longer directly used in the fetch path, but derived from the path for initial auth check
-    const initialRoleCheck = pathParts[1]; 
-    
-    if (!token) {
-        alert('缺少访问令牌，请通过正确的URL访问系统');
-        return;
-    }
-    
-    // Authenticate user
-    try {
-        // Workers now return JSON for auth routes, not static files.
-        // The frontend will make an API call to authenticate.
-        const response = await fetch(\`/api/users/auth?token=\${token}&role=\${initialRoleCheck}\`);
-        if (!response.ok) {
-            throw new Error('认证失败');
-        }
-        
-        const userData = await response.json();
-        currentUser = userData;
-        
-        // Update UI with user info
-        userInfo.textContent = \`欢迎, \${currentUser.username} (\${currentUser.role})\`;
-        
-        // Show admin section if user is admin
-        if (currentUser.role === 'admin') {
-            usersSection.classList.add('visible');
-        }
-        
-        // Load initial data
-        await loadTasks();
-        await loadAssets();
-        if (currentUser.role === 'admin') {
-            await loadUsers();
-        }
-    } catch (error) {
-        console.error('认证错误:', error);
-        alert('认证失败: ' + error.message);
-    }
-    
-    // Set up event listeners
-    setupEventListeners();
+addEventListener('fetch', event => {
+  event.respondWith(handleRequest(event.request));
 });
 
-// Set up event listeners
-function setupEventListeners() {
-    // Task form submission
-    taskForm.addEventListener('submit', handleTaskSubmit);
-    
-    // Asset form submission
-    assetForm.addEventListener('submit', handleAssetSubmit);
-    
-    // User form submission
-    userForm.addEventListener('submit', handleUserSubmit);
-    
-    // Cancel buttons
-    document.getElementById('cancel-edit').addEventListener('click', clearTaskForm);
-    document.getElementById('cancel-asset-edit').addEventListener('click', clearAssetForm);
-    
-    // Progress slider
-    document.getElementById('task-progress').addEventListener('input', function() {
-        document.getElementById('progress-value').textContent = this.value + '%';
-    });
+// --- 辅助函数 ---
+
+const getKvKey = (userId) => `todos:${userId}`;
+
+function getDisplayName(userId) {
+  if (userId === 'admin') return 'yc';
+  return userId;
 }
 
-// Task Management Functions
-async function loadTasks() {
-    try {
-        const response = await fetch('/api/tasks');
-        if (!response.ok) throw new Error('获取任务失败');
-        
-        const tasks = await response.json();
-        renderTasks(tasks);
-    } catch (error) {
-        console.error('加载任务错误:', error);
-        alert('加载任务失败: ' + error.message);
-    }
+function formatDate(isoString) {
+  if (!isoString) return '';
+  const d = new Date(isoString);
+  
+  // Beijing is UTC+8
+  const beijingOffset = 8 * 60 * 60 * 1000;
+  const beijingTime = new Date(d.getTime() + beijingOffset);
+  
+  const year = beijingTime.getUTCFullYear();
+  const month = beijingTime.getUTCMonth() + 1;
+  const day = beijingTime.getUTCDate();
+  const hours = beijingTime.getUTCHours();
+  const minutes = beijingTime.getUTCMinutes();
+  
+  const paddedMinutes = minutes < 10 ? '0' + minutes : minutes;
+  return `${year}年${month}月${day}日 ${hours}点${paddedMinutes}分`;
 }
 
-function renderTasks(tasks) {
-    tasksList.innerHTML = '';
-    
-    if (tasks.length === 0) {
-        tasksList.innerHTML = '<p>暂无任务</p>';
-        return;
-    }
-    
-    tasks.forEach(task => {
-        const taskElement = document.createElement('div');
-        taskElement.className = 'task-item';
-        taskElement.innerHTML = \`
-            <h3>\${task.title}</h3>
-            <p><strong>描述:</strong> \${task.description || '无'}</p>
-            <p><strong>状态:</strong> \${task.status}</p>
-            <p><strong>进度:</strong></p>
-            <div class="progress-container">
-                <div class="progress-bar" style="width: \${task.progress}%">\${task.progress}%</div>
-            </div>
-            <p><strong>指派人:</strong> \${task.assignee_id}</p>
-            <p><strong>创建人:</strong> \${task.creator_id}</p>
-            <p><strong>截止日期:</strong> \${task.due_date || '未设置'}</p>
-            <div class="task-actions">
-                <button class="edit-btn" onclick="editTask('\${task.id}')">编辑</button>
-                <button class="delete-btn" onclick="deleteTask('\${task.id}')">删除</button>
-            </div>
-        \`;
-        tasksList.appendChild(taskElement);
-    });
-}
+// --- R2 存储函数 ---
 
-async function handleTaskSubmit(event) {
-    event.preventDefault();
-    
-    const taskData = {
-        id: document.getElementById('task-id').value || crypto.randomUUID(),
-        title: document.getElementById('task-title').value,
-        description: document.getElementById('task-description').value,
-        status: document.getElementById('task-status').value,
-        progress: parseInt(document.getElementById('task-progress').value),
-        assignee_id: currentUser.username,
-        creator_id: currentUser.username,
-        due_date: document.getElementById('task-due-date').value
-    };
-    
-    try {
-        const response = await fetch('/api/tasks', {
-            method: 'POST',
-            headers: {
-                'Content-Type': 'application/json'
-            },
-            body: JSON.stringify(taskData)
-        });
-        
-        if (!response.ok) throw new Error('保存任务失败');
-        
-        const savedTask = await response.json();
-        console.log('任务已保存:', savedTask);
-        
-        // Clear form and reload tasks
-        clearTaskForm();
-        await loadTasks();
-    } catch (error) {
-        console.error('保存任务错误:', error);
-        alert('保存任务失败: ' + error.message);
-    }
-}
-
-function editTask(taskId) {
-    // Find the task in the DOM and populate the form
-    // In a real implementation, we would fetch the task details from the API
-    alert('编辑功能将在后续实现');
-}
-
-async function deleteTask(taskId) {
-    if (!confirm('确定要删除这个任务吗?')) return;
-    
-    try {
-        const response = await fetch(\`/api/tasks/\${taskId}\`, {
-            method: 'DELETE'
-        });
-        
-        if (!response.ok) throw new Error('删除任务失败');
-        
-        await loadTasks();
-    } catch (error) {
-        console.error('删除任务错误:', error);
-        alert('删除任务失败: ' + error.message);
-    }
-}
-
-function clearTaskForm() {
-    taskForm.reset();
-    document.getElementById('task-id').value = '';
-    document.getElementById('progress-value').textContent = '0%';
-}
-
-// Asset Management Functions
-async function loadAssets() {
-    try {
-        const response = await fetch('/api/assets');
-        if (!response.ok) throw new Error('获取资产失败');
-        
-        const assets = await response.json();
-        renderAssets(assets);
-        updateAssetOwnerDropdown(assets);
-    } catch (error) {
-        console.error('加载资产错误:', error);
-        alert('加载资产失败: ' + error.message);
-    }
-}
-
-function renderAssets(assets) {
-    assetsList.innerHTML = '';
-    
-    if (assets.length === 0) {
-        assetsList.innerHTML = '<p>暂无资产</p>';
-        return;
-    }
-    
-    assets.forEach(asset => {
-        const assetElement = document.createElement('div');
-        assetElement.className = 'asset-item';
-        assetElement.innerHTML = \`
-            <h3>\${asset.name}</h3>
-            <p><strong>当前保管人:</strong> \${asset.current_owner_id}</p>
-            \${asset.image_r2_key ? \`<img src="/api/files/\${asset.image_r2_key}" alt="\${asset.name}" class="asset-image">\` : ''}
-            <p><strong>交接历史:</strong></p>
-            <ul>
-                \${(asset.transfer_history || []).map(transfer => 
-                    \`<li>\${transfer.from_owner_id} → \${transfer.to_owner_id} (\${new Date(transfer.transfer_time).toLocaleString()})</li>\`
-                ).join('')}
-            </ul>
-            <div class="asset-actions">
-                <button class="transfer-btn" onclick="transferAsset('\${asset.id}')">交接</button>
-            </div>
-        \`;
-        assetsList.appendChild(assetElement);
-    });
-}
-
-function updateAssetOwnerDropdown(assets) {
-    const ownerSelect = document.getElementById('asset-owner');
-    ownerSelect.innerHTML = '';
-    
-    // Get unique owners from assets and users
-    const owners = [...new Set([
-        ...assets.map(a => a.current_owner_id),
-        ...users.map(u => u.username)
-    ])];
-    
-    owners.forEach(owner => {
-        const option = document.createElement('option');
-        option.value = owner;
-        option.textContent = owner;
-        ownerSelect.appendChild(option);
-    });
-}
-
-async function handleAssetSubmit(event) {
-    event.preventDefault();
-    
-    // Handle image upload if a file is selected
-    let imageKey = document.getElementById('asset-image-key').value;
-    const imageFile = document.getElementById('asset-image').files[0];
-    
-    if (imageFile) {
-        try {
-            // Get presigned URL for upload
-            const presignResponse = await fetch(\`/api/files/presign-upload?filename=\${encodeURIComponent(imageFile.name)}\`);
-            if (!presignResponse.ok) throw new Error('获取上传URL失败');
-            
-            const { uploadUrl, fileKey } = await presignResponse.json();
-            imageKey = fileKey;
-            
-            // Upload file directly to R2
-            const uploadResponse = await fetch(uploadUrl, {
-                method: 'PUT',
-                body: imageFile,
-                headers: {
-                    'Content-Type': imageFile.type
-                }
-            });
-            
-            if (!uploadResponse.ok) throw new Error('文件上传失败');
-        } catch (error) {
-            console.error('文件上传错误:', error);
-            alert('文件上传失败: ' + error.message);
-            return;
-        }
-    }
-    
-    const assetData = {
-        id: document.getElementById('asset-id').value || crypto.randomUUID(),
-        name: document.getElementById('asset-name').value,
-        current_owner_id: document.getElementById('asset-owner').value,
-        image_r2_key: imageKey,
-        transfer_history: []
-    };
-    
-    try {
-        const response = await fetch('/api/assets', {
-            method: 'POST',
-            headers: {
-                'Content-Type': 'application/json'
-            },
-            body: JSON.stringify(assetData)
-        });
-        
-        if (!response.ok) throw new Error('保存资产失败');
-        
-        const savedAsset = await response.json();
-        console.log('资产已保存:', savedAsset);
-        
-        // Clear form and reload assets
-        clearAssetForm();
-        await loadAssets();
-    } catch (error) {
-        console.error('保存资产错误:', error);
-        alert('保存资产失败: ' + error.message);
-    }
-}
-
-async function transferAsset(assetId) {
-    const newOwnerId = prompt('请输入新的保管人用户名:');
-    if (!newOwnerId) return;
-
-    try {
-        const response = await fetch('/api/assets/transfer', {
-            method: 'POST',
-            headers: {
-                'Content-Type': 'application/json'
-            },
-            body: JSON.stringify({ assetId, newOwnerId })
-        });
-
-        if (!response.ok) throw new Error('资产交接失败');
-
-        const updatedAsset = await response.json();
-        console.log('资产已交接:', updatedAsset);
-        await loadAssets();
-    } catch (error) {
-        console.error('资产交接错误:', error);
-        alert('资产交接失败: ' + error.message);
-    }
-}
-
-function clearAssetForm() {
-    assetForm.reset();
-    document.getElementById('asset-id').value = '';
-    document.getElementById('asset-image-key').value = '';
-}
-
-// User Management Functions
-async function loadUsers() {
-    try {
-        const response = await fetch('/api/users');
-        if (!response.ok) throw new Error('获取用户失败');
-        
-        users = await response.json();
-        renderUsers(users);
-        updateAssetOwnerDropdown([]); // Update dropdown with new users
-    } catch (error) {
-        console.error('加载用户错误:', error);
-        alert('加载用户失败: ' + error.message);
-    }
-}
-
-function renderUsers(users) {
-    usersList.innerHTML = '';
-    
-    if (users.length === 0) {
-        usersList.innerHTML = '<p>暂无用户</p>';
-        return;
-    }
-    
-    users.forEach(user => {
-        const userElement = document.createElement('div');
-        userElement.className = 'user-item';
-        userElement.innerHTML = \`
-            <h3>\${user.username}</h3>
-            <p><strong>角色:</strong> \${user.role}</p>
-            <p><strong>Token:</strong> \${user.token}</p>
-        \`;
-        usersList.appendChild(userElement);
-    });
-}
-
-async function handleUserSubmit(event) {
-    event.preventDefault();
-    
-    const userData = {
-        username: document.getElementById('user-username').value,
-        role: document.getElementById('user-role').value,
-        token: Math.random().toString(36).substring(2, 15) + Math.random().toString(36).substring(2, 15)
-    };
-    
-    try {
-        const response = await fetch('/api/users/add', {
-            method: 'POST',
-            headers: {
-                'Content-Type': 'application/json'
-            },
-            body: JSON.stringify(userData)
-        });
-        
-        if (!response.ok) throw new Error('添加用户失败');
-        
-        const savedUser = await response.json();
-        console.log('用户已添加:', savedUser);
-        
-        // Clear form and reload users
-        userForm.reset();
-        await loadUsers();
-    } catch (error) {
-        console.error('添加用户错误:', error);
-        alert('添加用户失败: ' + error.message);
-    }
-}
-`;
-
-async function ensureAdminUser(env) {
-  const usersObject = await env.R2_BUCKET.get('config:share_links');
-  let users = {};
-  if (usersObject !== null) {
-    users = JSON.parse(await usersObject.text());
+async function loadTodos(key) {
+  try {
+    const r2Object = await R2_BUCKET.get(key);
+    if (r2Object === null) return [];
+    return await r2Object.json();
+  } catch (error) {
+    console.error(`Error loading or parsing todos for key ${key}:`, error);
+    return [];
   }
-
-  let adminUser = Object.values(users).find(u => u.role === 'admin');
-
-  if (!adminUser) {
-    adminUser = {
-      username: 'admin',
-      role: 'admin',
-      token: Math.random().toString(36).substring(2, 15) + Math.random().toString(36).substring(2, 15)
-    };
-    users[adminUser.username] = adminUser;
-    await env.R2_BUCKET.put('config:share_links', JSON.stringify(users));
-    console.log('Default admin user created:', adminUser);
-  }
-  return adminUser;
 }
 
-export default {
-  async fetch(request, env) {
-    const url = new URL(request.url);
-    const path = url.pathname;
+async function saveTodos(key, todos) {
+  await R2_BUCKET.put(key, JSON.stringify(todos));
+}
 
-    // Log all incoming requests for debugging
-    console.log('Incoming request path:', path);
-
-    // Serve static assets first
-    if (path === '/styles.css') {
-      console.log('Serving styles.css');
-      return new Response(stylesCssContent, {
-        headers: { 'Content-Type': 'text/css' }
-      });
-    }
-
-    if (path === '/script.js') {
-      console.log('Serving script.js');
-      return new Response(scriptJsContent, {
-        headers: { 'Content-Type': 'application/javascript' }
-      });
-    }
-
-    // Serve index.html for the root path and authenticated paths
-    if (path === '/' || path.startsWith('/admin/') || path.startsWith('/member/')) {
-      // Ensure admin user exists on every request (can be optimized for production)
-      const adminUser = await ensureAdminUser(env);
-      
-      if (path === '/') {
-        // If accessing root, redirect to admin page with token
-        const adminUrl = new URL(request.url);
-        adminUrl.pathname = `/admin/${adminUser.token}`;
-        console.log('Redirecting root to admin path:', adminUrl.toString());
-        return Response.redirect(adminUrl.toString(), 302);
-      }
-      
-      console.log('Serving indexHtmlContent for path:', path);
-      return new Response(indexHtmlContent, {
-        headers: { 'Content-Type': 'text/html' }
-      });
-    }
-
-    // Route handling for API
-    if (path.startsWith('/api/')) {
-      if (request.method === 'GET') {
-        return handleApiGetRequest(path, request, env);
-      } else if (request.method === 'POST') {
-        return handleApiPostRequest(path, request, env);
-      } else if (request.method === 'DELETE') {
-        if (path.startsWith('/api/tasks/')) {
-          return handleApiDeleteRequest(path, request, env);
-        }
-      }
-    }
-    
-    console.log('Path not found:', path);
-    return new Response('Not Found', { status: 404 });
+async function loadShareLinks() {
+  try {
+    const r2Object = await R2_BUCKET.get(SHARE_LINKS_KEY);
+    if (r2Object === null) return {};
+    return await r2Object.json();
+  } catch (error) {
+    console.error("Error loading share links:", error);
+    return {};
   }
+}
+
+async function saveShareLinks(links) {
+  await R2_BUCKET.put(SHARE_LINKS_KEY, JSON.stringify(links));
+}
+
+async function loadDeletedTodos() {
+  try {
+    const r2Object = await R2_BUCKET.get(DELETED_TODOS_KEY);
+    if (r2Object === null) return [];
+    return await r2Object.json();
+  } catch (error) {
+    console.error("Error loading deleted todos:", error);
+    return [];
+  }
+}
+
+async function saveDeletedTodos(todos) {
+  await R2_BUCKET.put(DELETED_TODOS_KEY, JSON.stringify(todos));
+}
+
+async function loadKeptItems() {
+  try {
+    const r2Object = await R2_BUCKET.get(KEPT_ITEMS_KEY);
+    if (r2Object === null) return [];
+    return await r2Object.json();
+  } catch (error) {
+    console.error("Error loading kept items:", error);
+    return [];
+  }
+}
+
+async function saveKeptItems(items) {
+  await R2_BUCKET.put(KEPT_ITEMS_KEY, JSON.stringify(items));
+}
+
+async function getAllUsersTodos() {
+  const listResponse = await R2_BUCKET.list({ prefix: 'todos:' });
+  const keys = listResponse.objects.map(k => k.key);
+  
+  let allTodos = [];
+  for (const key of keys) {
+    const ownerId = key.substring(6);
+    const userTodos = await loadTodos(key);
+    allTodos.push(...userTodos.map(todo => ({ ...todo, ownerId: ownerId })));
+  }
+  allTodos.sort((a, b) => new Date(b.createdAt) - new Date(a.createdAt));
+  return allTodos;
+}
+
+
+// --- 静态资源处理 ---
+
+// 由于 Worker 本身无法直接 serve 静态文件，我们需要将文件内容作为字符串常量
+// 在实际部署中，这些内容应该通过构建过程或从其他地方获取
+const STATIC_FILES = {
+  '/': () => renderMasterViewHtml, // 主页仍然使用动态渲染
+  '/index.html': () => `<!DOCTYPE html>
+<html lang="zh">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>全局待办事项清单</title>
+  <script src="https://cdn.tailwindcss.com"></script>
+  <link rel="stylesheet" href="/styles.css">
+</head>
+<body class="p-4 md:p-8">
+  <div class="container mx-auto max-w-4xl space-y-10">
+    
+    <h1 class="text-4xl font-bold text-center text-gray-900">全局待办事项清单</h1>
+
+    <!-- 添加事项的表单 -->
+    <div class="bg-white p-6 rounded-xl shadow-lg">
+      <h2 class="text-2xl font-semibold mb-4 text-gray-800">添加新事项</h2>
+      <form action="/add_todo" method="POST">
+        <input type="hidden" name="creatorId" value="admin">
+        <div class="grid grid-cols-1 md:grid-cols-5 gap-4">
+          <input type="text" name="text" placeholder="输入新的待办事项..." required class="md:col-span-3 p-3 border rounded-lg">
+          
+          <div class="md:col-span-2 p-3 border rounded-lg bg-gray-50">
+            <h3 class="text-base font-semibold mb-2 text-gray-700">指派给 (可多选)</h3>
+            <div class="space-y-2 max-h-24 overflow-y-auto">
+                <label class="flex items-center space-x-2 font-normal">
+                    <input type="checkbox" name="userIds" value="public" class="rounded border-gray-300 text-blue-600 shadow-sm focus:border-blue-300 focus:ring focus:ring-blue-200 focus:ring-opacity-50">
+                    <span>Public (无指定用户)</span>
+                </label>
+                <!-- 用户选项将在这里动态插入 -->
+            </div>
+          </div>
+        </div>
+        <button type="submit" class="mt-4 w-full bg-blue-500 hover:bg-blue-600 text-white font-semibold py-3 px-6 rounded-lg">添加</button>
+      </form>
+    </div>
+
+    <!-- 待办事项列表 -->
+    <div class="bg-white p-6 rounded-xl shadow-lg">
+      <h2 class="text-2xl font-semibold mb-4 text-gray-800">所有事项</h2>
+      <ul id="all-todos-list" class="space-y-3">
+        <p class="text-center text-gray-500 py-10">无任何待办事项。</p>
+      </ul>
+    </div>
+
+    <!-- 用户管理区域 -->
+    <div class="bg-white p-6 rounded-xl shadow-lg">
+      <h2 class="text-2xl font-semibold mb-4 text-gray-800">用户管理</h2>
+      <div class="grid grid-cols-1 md:grid-cols-2 gap-8">
+        <div>
+          <h3 class="text-lg font-semibold mb-2">新增用户</h3>
+          <form action="/add_user" method="POST" class="flex space-x-2">
+            <input type="text" name="username" placeholder="新用户名..." required class="flex-grow p-2 border rounded-lg">
+            <button type="submit" class="bg-green-500 hover:bg-green-600 text-white font-semibold py-2 px-4 rounded-lg">创建</button>
+          </form>
+        </div>
+        <div>
+          <h3 class="text-lg font-semibold mb-2">现有用户 (<span id="user-count">0</span>)</h3>
+          <ul id="user-list" class="space-y-2">
+            <li class="text-gray-500">暂无用户。</li>
+          </ul>
+        </div>
+      </div>
+    </div>
+
+    <!-- 最近删除 -->
+    <div class="bg-white p-6 rounded-xl shadow-lg">
+      <h2 class="text-2xl font-semibold mb-4 text-gray-800">最近删除 (5天内)</h2>
+      <ul id="deleted-todos-list" class="space-y-3">
+        <p class="text-center text-gray-500 py-10">无已删除事项。</p>
+      </ul>
+    </div>
+
+  </div>
+
+  <script src="/script.js"></script>
+</body>
+</html>`,
+  '/styles.css': () => `body { 
+  font-family: 'Inter', sans-serif; 
+  background-color: #f4f5f7; 
+}
+
+.completed label { 
+  text-decoration: line-through; 
+  color: #9ca3af; 
+}
+
+.todo-item { 
+  display: flex; 
+  align-items: center; 
+  padding: 12px; 
+  background: white; 
+  border-radius: 8px; 
+  box-shadow: 0 1px 2px rgba(0,0,0,0.05); 
+}
+
+.todo-item input[type="checkbox"] { 
+  width: 18px; 
+  height: 18px; 
+  margin-right: 12px; 
+  flex-shrink: 0; 
+  cursor: pointer; 
+}
+
+.todo-item label { 
+  flex-grow: 1; 
+  font-size: 1.05em; 
+}
+
+.meta-info { 
+  font-size: 0.8em; 
+  color: #6b7280; 
+}
+
+.delete-btn, .delete-link-btn {
+  background-color: #ef4444; 
+  color: white; 
+  border: none; 
+  padding: 4px 10px; 
+  border-radius: 6px; 
+  font-weight: bold; 
+  cursor: pointer; 
+  transition: background-color 0.2s;
+}
+
+.delete-btn:hover, .delete-link-btn:hover { 
+  background-color: #dc2626; 
+}`,
+  '/script.js': () => `async function toggleTodo(id, isChecked, ownerId) {
+  try {
+    const response = await fetch('/update_todo', {
+      method: 'PUT',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ id, completed: isChecked, ownerId }),
+    });
+    if (!response.ok) throw new Error('Update failed');
+    window.location.reload();
+  } catch (error) {
+    console.error("Update failed:", error);
+    alert('Update failed, please try again.');
+  }
+}
+
+async function deleteTodo(id, ownerId) {
+  if (!confirm('确定要删除用户 ' + ownerId + ' 的此事项吗？')) return;
+  try {
+    const response = await fetch('/delete_todo', {
+      method: 'DELETE',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ id, ownerId }),
+    });
+    if (!response.ok) throw new Error('Delete failed');
+    window.location.reload();
+  } catch (error) {
+    console.error("Delete failed:", error);
+    alert('Delete failed, please try again.');
+  }
+}
+
+async function deleteUser(token) {
+  if (!confirm('确定要删除此用户吗？其个人链接将失效。')) return;
+  try {
+    const response = await fetch('/delete_user', {
+      method: 'DELETE',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ token }),
+    });
+    if (!response.ok) throw new Error('Delete user failed');
+    window.location.reload();
+  } catch (error) {
+    console.error("Delete user failed:", error);
+    alert('Delete user failed, please try again.');
+  }
+}`
 };
 
-// Handle API GET requests
-async function handleApiGetRequest(path, request, env) {
-  if (path === '/api/tasks') {
-    return getAllTasks(env);
-  } else if (path === '/api/assets') {
-    return getAllAssets(env);
-  } else if (path === '/api/users') {
-    return getAllUsers(env);
-  } else if (path === '/api/users/auth') {
-    return authenticateUser(request, env);
-  } else if (path === '/api/files/presign-upload') {
-    return presignUploadUrl(request, env);
-  } else if (path.startsWith('/api/files/')) {
-    const key = path.substring(11); // Remove '/api/files/'
-    return serveFileFromR2(key, env);
-  }
-  
-  return new Response('Not Found', { status: 404 });
-}
+// --- 主请求处理器 ---
 
-// Handle API POST requests
-async function handleApiPostRequest(path, request, env) {
-  if (path === '/api/tasks') {
-    return createOrUpdateTask(request, env);
-  } else if (path === '/api/assets') {
-    return registerAsset(request, env);
-  } else if (path === '/api/assets/transfer') {
-    return transferAsset(request, env);
-  } else if (path === '/api/users/add') {
-    return addUser(request, env);
-  }
-  
-  return new Response('Not Found', { status: 404 });
-}
-
-// Handle API DELETE requests
-async function handleApiDeleteRequest(path, request, env) {
-  const taskId = path.split('/')[3];
-  if (taskId) {
-    return deleteTask(taskId, env);
-  }
-  
-  return new Response('Bad Request', { status: 400 });
-}
-
-// API Implementation Functions
-async function getAllTasks(env) {
-  try {
-    const tasksObject = await env.R2_BUCKET.get('data:tasks');
-    let tasks = [];
-    
-    if (tasksObject !== null) {
-      const tasksData = await tasksObject.text();
-      tasks = JSON.parse(tasksData);
-    }
-    
-    return new Response(JSON.stringify(tasks), {
-      headers: { 'Content-Type': 'application/json' }
-    });
-  } catch (error) {
-    return new Response('Error fetching tasks: ' + error.message, { status: 500 });
-  }
-}
-
-async function getAllAssets(env) {
-  try {
-    const assetsObject = await env.R2_BUCKET.get('data:assets');
-    let assets = [];
-    
-    if (assetsObject !== null) {
-      const assetsData = await assetsObject.text();
-      assets = JSON.parse(assetsData);
-    }
-    
-    return new Response(JSON.stringify(assets), {
-      headers: { 'Content-Type': 'application/json' }
-    });
-  } catch (error) {
-    return new Response('Error fetching assets: ' + error.message, { status: 500 });
-  }
-}
-
-async function getAllUsers(env) {
-  try {
-    const usersObject = await env.R2_BUCKET.get('config:share_links');
-    let users = {};
-    
-    if (usersObject !== null) {
-      const usersData = await usersObject.text();
-      users = JSON.parse(usersData);
-    }
-    
-    // Return array of users instead of object
-    const usersArray = Object.values(users);
-    
-    return new Response(JSON.stringify(usersArray), {
-      headers: { 'Content-Type': 'application/json' }
-    });
-  } catch (error) {
-    return new Response('Error fetching users: ' + error.message, { status: 500 });
-  }
-}
-
-async function authenticateUser(request, env) {
+async function handleRequest(request) {
   try {
     const url = new URL(request.url);
-    const token = url.searchParams.get('token');
-    const role = url.searchParams.get('role');
-    
-    if (!token) {
-      return new Response('Missing token parameter', { status: 400 });
+    const verificationFilePath = '/6ee0f9bfa3e3dd568497b8062fba8521.txt';
+    const verificationContent = '12c799e1e1c52e9b3d20f6420f5e46a0589222ba';
+    // 1. 优先级最高：处理域名验证文件
+    // 必须检查完整的 url.pathname，而不是 pathSegment
+    if (url.pathname === verificationFilePath) {
+        return new Response(verificationContent, {
+            headers: { 'Content-Type': 'text/plain;charset=UTF-8' },
+            status: 200
+        });
     }
-    
-    // Get user data from R2
-    const userConfig = await env.R2_BUCKET.get('config:share_links');
-    let users = {};
-    
-    if (userConfig !== null) {
-      const userData = await userConfig.text();
-      users = JSON.parse(userData);
-    }
-    
-    // Find user by token
-    const user = Object.values(users).find(u => u.token === token);
-    
-    if (!user || user.role !== (role === 'admin' ? 'admin' : 'member')) {
-      return new Response('Authentication failed', { status: 401 });
-    }
-    
-    return new Response(JSON.stringify(user), {
-      headers: { 'Content-Type': 'application/json' }
-    });
-  } catch (error) {
-    return new Response('Error authenticating user: ' + error.message, { status: 500 });
-  }
-}
 
-async function createOrUpdateTask(request, env) {
-  try {
-    const taskData = await request.json();
+  const pathname = url.pathname;
+  const pathSegment = pathname.substring(1).split('/')[0].toLowerCase();
+  
+  // 处理静态资源请求
+  if (request.method === 'GET' && STATIC_FILES[pathname]) {
+    const content = STATIC_FILES[pathname]();
+    let contentType = 'text/plain';
     
-    // Read existing tasks
-    const tasksObject = await env.R2_BUCKET.get('data:tasks');
-    let tasks = [];
+    if (pathname.endsWith('.html')) contentType = 'text/html;charset=UTF-8';
+    if (pathname.endsWith('.css')) contentType = 'text/css';
+    if (pathname.endsWith('.js')) contentType = 'application/javascript';
     
-    if (tasksObject !== null) {
-      const tasksData = await tasksObject.text();
-      tasks = JSON.parse(tasksData);
+    // 如果是主页，使用动态渲染
+    if (pathname === '/' || pathname === '/index.html') {
+      const shareLinks = await loadShareLinks();
+      const isRootView = pathSegment === '';
+      
+      if (isRootView || shareLinks[pathSegment]) {
+        const allTodos = await getAllUsersTodos();
+        let deletedTodos = await loadDeletedTodos();
+
+        const fiveDaysAgo = new Date(Date.now() - 5 * 24 * 60 * 60 * 1000);
+        const recentDeletedTodos = deletedTodos.filter(todo => new Date(todo.deletedAt) > fiveDaysAgo);
+        if (recentDeletedTodos.length < deletedTodos.length) {
+          await saveDeletedTodos(recentDeletedTodos);
+        }
+
+        const keptItems = await loadKeptItems(); // 加载保管物品
+        return new Response(renderMasterViewHtml(url, allTodos, recentDeletedTodos, keptItems, shareLinks, isRootView), {
+          headers: { 'Content-Type': 'text/html;charset=UTF-8' },
+        });
+      } else {
+        return new Response('404 Not Found: User or page does not exist.', { status: 404 });
+      }
     }
     
-    // Check if task already exists (update) or is new (create)
-    const existingIndex = tasks.findIndex(t => t.id === taskData.id);
+    return new Response(content, {
+      headers: { 'Content-Type': contentType },
+    });
+  }
+  
+  if (request.method === 'POST' && pathSegment === 'add_todo') {
+    return handleAddTodo(request, url);
+  }
+  if (request.method === 'PUT' && pathSegment === 'update_todo') {
+    return handleUpdateTodo(request);
+  }
+  if (request.method === 'DELETE' && pathSegment === 'delete_todo') {
+    return handleDeleteTodo(request);
+  }
+  if (request.method === 'POST' && pathSegment === 'add_user') {
+    return handleCreateUser(request, url);
+  }
+  if (request.method === 'DELETE' && pathSegment === 'delete_user') {
+    return handleDeleteUser(request);
+  }
+  if (request.method === 'POST' && pathSegment === 'add_item') { // 新增物品保管路由
+    return handleAddItem(request, url);
+  }
+  if (request.method === 'DELETE' && pathSegment === 'delete_item') { // 删除物品保管路由
+    return handleDeleteItem(request);
+  }
+
+  if (request.method === 'GET') {
+    const shareLinks = await loadShareLinks();
+    const isRootView = pathSegment === '';
     
-    if (existingIndex >= 0) {
-      // Update existing task
-      tasks[existingIndex] = { ...tasks[existingIndex], ...taskData };
+    if (isRootView || shareLinks[pathSegment]) {
+      const allTodos = await getAllUsersTodos();
+      let deletedTodos = await loadDeletedTodos();
+      const keptItems = await loadKeptItems(); // 加载保管物品
+
+      const fiveDaysAgo = new Date(Date.now() - 5 * 24 * 60 * 60 * 1000);
+      const recentDeletedTodos = deletedTodos.filter(todo => new Date(todo.deletedAt) > fiveDaysAgo);
+      if (recentDeletedTodos.length < deletedTodos.length) {
+        await saveDeletedTodos(recentDeletedTodos);
+      }
+
+      return new Response(renderMasterViewHtml(url, allTodos, recentDeletedTodos, keptItems, shareLinks, isRootView), {
+        headers: { 'Content-Type': 'text/html;charset=UTF-8' },
+      });
     } else {
-      // Create new task
-      tasks.push(taskData);
+      return new Response('404 Not Found: User or page does not exist.', { status: 404 });
     }
-    
-    // Write back to R2
-    await env.R2_BUCKET.put('data:tasks', JSON.stringify(tasks));
-    
-    return new Response(JSON.stringify(taskData), {
-      headers: { 'Content-Type': 'application/json' }
-    });
+  }
+
+  return new Response('Method Not Allowed', { status: 405 });
   } catch (error) {
-    return new Response('Error creating/updating task: ' + error.message, { status: 500 });
+    console.error('Error in handleRequest:', error);
+    return new Response('Internal Server Error', { status: 500 });
   }
 }
 
-async function deleteTask(taskId, env) {
-  try {
-    // Read existing tasks
-    const tasksObject = await env.R2_BUCKET.get('data:tasks');
-    let tasks = [];
-    
-    if (tasksObject !== null) {
-      const tasksData = await tasksObject.text();
-      tasks = JSON.parse(tasksData);
+// --- API 逻辑处理器 ---
+
+async function handleAddTodo(request, url) {
+  const referer = request.headers.get('Referer') || url.origin;
+  const refererPath = new URL(referer).pathname.substring(1).split('/')[0].toLowerCase();
+  
+  const shareLinks = await loadShareLinks();
+  let creatorId = 'admin';
+  if (shareLinks[refererPath]) {
+      creatorId = shareLinks[refererPath].username;
+  }
+
+  const formData = await request.formData();
+  const text = formData.get('text');
+  const imageFile = formData.get('image'); // 获取图片文件
+  let ownerIds = formData.getAll('userIds');
+
+  if (!text) {
+    return new Response('Missing "text" in form data', { status: 400 });
+  }
+  
+  if (ownerIds.length === 0) {
+    ownerIds.push('public');
+  }
+
+  let imageUrl = null;
+  if (imageFile && imageFile.size > 0) {
+    const imageId = crypto.randomUUID();
+    const imageKey = `images/${imageId}-${imageFile.name}`;
+    await R2_BUCKET.put(imageKey, imageFile.stream());
+    imageUrl = `/images/${imageId}-${imageFile.name}`; // 存储相对路径
+  }
+
+  const newTodo = {
+    id: crypto.randomUUID(),
+    text: text,
+    completed: false,
+    createdAt: new Date().toISOString(),
+    creatorId: creatorId,
+    imageUrl: imageUrl, // 添加图片 URL
+  };
+
+  for (const ownerId of ownerIds) {
+    const kvKey = getKvKey(ownerId);
+    const todos = await loadTodos(kvKey);
+    todos.push(newTodo);
+    await saveTodos(kvKey, todos);
+  }
+
+  return Response.redirect(referer, 303);
+}
+
+async function handleUpdateTodo(request) {
+  const { id, completed, ownerId } = await request.json();
+  if (!id || completed === undefined || !ownerId) {
+    return new Response(JSON.stringify({ error: "Missing 'id', 'completed', or 'ownerId'" }), { status: 400 });
+  }
+
+  const referer = request.headers.get('Referer');
+  let completerId = 'admin';
+  if (referer) {
+      const refererPath = new URL(referer).pathname.substring(1).split('/')[0].toLowerCase();
+      const shareLinks = await loadShareLinks();
+      if (shareLinks[refererPath]) {
+          completerId = shareLinks[refererPath].username;
+      }
+  }
+
+  const kvKey = getKvKey(ownerId);
+  const todos = await loadTodos(kvKey);
+  const todoIndex = todos.findIndex(t => t.id === id);
+
+  if (todoIndex !== -1) {
+    const isCompleted = Boolean(completed);
+    todos[todoIndex].completed = isCompleted;
+    if (isCompleted) {
+      todos[todoIndex].completedAt = new Date().toISOString();
+      todos[todoIndex].completedBy = completerId;
+    } else {
+      delete todos[todoIndex].completedAt;
+      delete todos[todoIndex].completedBy;
     }
-    
-    // Filter out the task to delete
-    tasks = tasks.filter(t => t.id !== taskId);
-    
-    // Write back to R2
-    await env.R2_BUCKET.put('data:tasks', JSON.stringify(tasks));
-    
-    return new Response(JSON.stringify({ success: true }), {
-      headers: { 'Content-Type': 'application/json' }
-    });
-  } catch (error) {
-    return new Response('Error deleting task: ' + error.message, { status: 500 });
+    await saveTodos(kvKey, todos);
+    return new Response(JSON.stringify({ success: true }), { status: 200 });
+  } else {
+    return new Response(JSON.stringify({ error: "Todo not found" }), { status: 404 });
   }
 }
 
-async function registerAsset(request, env) {
-  try {
-    const assetData = await request.json();
-    
-    // Read existing assets
-    const assetsObject = await env.R2_BUCKET.get('data:assets');
-    let assets = [];
-    
-    if (assetsObject !== null) {
-      const assetsData = await assetsObject.text();
-      assets = JSON.parse(assetsData);
-    }
-    
-    // Add new asset
-    assets.push(assetData);
-    
-    // Write back to R2
-    await env.R2_BUCKET.put('data:assets', JSON.stringify(assets));
-    
-    return new Response(JSON.stringify(assetData), {
-      headers: { 'Content-Type': 'application/json' }
-    });
-  } catch (error) {
-    return new Response('Error registering asset: ' + error.message, { status: 500 });
+async function handleDeleteTodo(request) {
+  const { id, ownerId } = await request.json();
+  if (!id || !ownerId) {
+    return new Response(JSON.stringify({ error: "Missing 'id' or 'ownerId'" }), { status: 400 });
+  }
+
+  const referer = request.headers.get('Referer');
+  let deleterId = 'admin';
+  if (referer) {
+      const refererPath = new URL(referer).pathname.substring(1).split('/')[0].toLowerCase();
+      const shareLinks = await loadShareLinks();
+      if (shareLinks[refererPath]) {
+          deleterId = shareLinks[refererPath].username;
+      }
+  }
+
+  const kvKey = getKvKey(ownerId);
+  let todos = await loadTodos(kvKey);
+  const todoIndex = todos.findIndex(t => t.id === id);
+
+  if (todoIndex !== -1) {
+    const todoToDelete = todos[todoIndex];
+    todos.splice(todoIndex, 1);
+    await saveTodos(kvKey, todos);
+
+    const deletedTodo = {
+      ...todoToDelete,
+      ownerId: ownerId,
+      deletedAt: new Date().toISOString(),
+      deletedBy: deleterId
+    };
+
+    const deletedTodos = await loadDeletedTodos();
+    deletedTodos.push(deletedTodo);
+    await saveDeletedTodos(deletedTodos);
+
+    return new Response(JSON.stringify({ success: true }), { status: 200 });
+  } else {
+    return new Response(JSON.stringify({ error: "Todo not found" }), { status: 404 });
   }
 }
 
-async function transferAsset(request, env) {
-  try {
-    const { assetId, newOwnerId } = await request.json();
-    
-    // Read existing assets
-    const assetsObject = await env.R2_BUCKET.get('data:assets');
-    let assets = [];
-    
-    if (assetsObject !== null) {
-      const assetsData = await assetsObject.text();
-      assets = JSON.parse(assetsData);
+async function handleCreateUser(request, url) {
+    const formData = await request.formData();
+    const username = formData.get('username')?.toLowerCase();
+    if (!username) {
+        return new Response('Username is required', { status: 400 });
     }
+
+    const shareLinks = await loadShareLinks();
+    const newToken = crypto.randomUUID().substring(0, 8);
     
-    // Find the asset to transfer
-    const assetIndex = assets.findIndex(a => a.id === assetId);
-    
-    if (assetIndex < 0) {
-      return new Response('Asset not found', { status: 404 });
-    }
-    
-    // Record the transfer
-    const transferRecord = {
-      from_owner_id: assets[assetIndex].current_owner_id,
-      to_owner_id: newOwnerId,
-      transfer_time: new Date().toISOString()
+    shareLinks[newToken] = {
+        username: username,
+        created_at: new Date().toISOString()
     };
     
-    // Update asset
-    assets[assetIndex].current_owner_id = newOwnerId;
-    assets[assetIndex].transfer_history = [
-      ...(assets[assetIndex].transfer_history || []),
-      transferRecord
-    ];
-    
-    // Write back to R2
-    await env.R2_BUCKET.put('data:assets', JSON.stringify(assets));
-    
-    return new Response(JSON.stringify(assets[assetIndex]), {
-      headers: { 'Content-Type': 'application/json' }
-    });
-  } catch (error) {
-    return new Response('Error transferring asset: ' + error.message, { status: 500 });
+    await saveShareLinks(shareLinks);
+    return Response.redirect(url.origin, 303);
+}
+
+async function handleDeleteUser(request) {
+    const { token } = await request.json();
+    if (!token) {
+        return new Response(JSON.stringify({ error: "Missing 'token'" }), { status: 400 });
+    }
+
+    const shareLinks = await loadShareLinks();
+    if (shareLinks[token]) {
+        delete shareLinks[token];
+        await saveShareLinks(shareLinks);
+        return new Response(JSON.stringify({ success: true }), { status: 200 });
+    } else {
+        return new Response(JSON.stringify({ error: "User token not found" }), { status: 404 });
+    }
+}
+
+// --- 物品保管 API 逻辑处理器 ---
+
+async function handleAddItem(request, url) {
+  const referer = request.headers.get('Referer') || url.origin;
+  const formData = await request.formData();
+  const name = formData.get('name');
+  const keeper = formData.get('keeper');
+  const imageFile = formData.get('image'); // 获取图片文件
+  const todoId = formData.get('todoId'); // 获取关联的 todoId
+
+  if (!name || !keeper) {
+    return new Response('Missing "name" or "keeper" in form data', { status: 400 });
+  }
+
+  let imageUrl = null;
+  if (imageFile && imageFile.size > 0) {
+    const imageId = crypto.randomUUID();
+    const imageKey = `images/${imageId}-${imageFile.name}`;
+    await R2_BUCKET.put(imageKey, imageFile.stream());
+    imageUrl = `/images/${imageId}-${imageFile.name}`; // 存储相对路径
+  }
+
+  const newItem = {
+    id: crypto.randomUUID(),
+    name: name,
+    keeper: keeper,
+    todoId: todoId || null, // 存储 todoId
+    imageUrl: imageUrl, // 添加图片 URL
+    createdAt: new Date().toISOString(),
+  };
+
+  const keptItems = await loadKeptItems();
+  keptItems.push(newItem);
+  await saveKeptItems(keptItems);
+
+  return Response.redirect(referer, 303);
+}
+
+async function handleDeleteItem(request) {
+  const { id } = await request.json();
+  if (!id) {
+    return new Response(JSON.stringify({ error: "Missing 'id'" }), { status: 400 });
+  }
+
+  let keptItems = await loadKeptItems();
+  const itemIndex = keptItems.findIndex(item => item.id === id);
+
+  if (itemIndex !== -1) {
+    keptItems.splice(itemIndex, 1);
+    await saveKeptItems(keptItems);
+    return new Response(JSON.stringify({ success: true }), { status: 200 });
+  } else {
+    return new Response(JSON.stringify({ error: "Item not found" }), { status: 404 });
   }
 }
 
-async function addUser(request, env) {
-  try {
-    const userData = await request.json();
-    
-    // Read existing users
-    const usersObject = await env.R2_BUCKET.get('config:share_links');
-    let users = {};
-    
-    if (usersObject !== null) {
-      const usersData = await usersObject.text();
-      users = JSON.parse(usersData);
-    }
-    
-    // Add new user
-    users[userData.username] = userData;
-    
-    // Write back to R2
-    await env.R2_BUCKET.put('config:share_links', JSON.stringify(users));
-    
-    return new Response(JSON.stringify(userData), {
-      headers: { 'Content-Type': 'application/json' }
-    });
-  } catch (error) {
-    return new Response('Error adding user: ' + error.message, { status: 500 });
-  }
-}
 
-async function presignUploadUrl(request, env) {
-  try {
-    const url = new URL(request.url);
-    const filename = url.searchParams.get('filename');
-    
-    if (!filename) {
-      return new Response('Missing filename parameter', { status: 400 });
-    }
-    
-    // Generate a unique key for the file
-    const uuid = crypto.randomUUID();
-    const key = `files:images/${uuid}-${filename}`;
-    
-    // Create a presigned URL for upload
-    const signedUrl = await env.R2_BUCKET.createSignedUrl(key, 3600, {
-      method: 'PUT'
-    });
-    
-    return new Response(JSON.stringify({
-      uploadUrl: signedUrl,
-      fileKey: key
-    }), {
-      headers: { 'Content-Type': 'application/json' }
-    });
-  } catch (error) {
-    return new Response('Error creating presigned URL: ' + error.message, { status: 500 });
-  }
-}
+// --- HTML 模板和前端逻辑 ---
 
-async function serveFileFromR2(key, env) {
-  try {
-    const object = await env.R2_BUCKET.get(key);
-    
-    if (object === null) {
-      return new Response('File not found', { status: 404 });
-    }
-    
-    const headers = new Headers();
-    object.writeHttpMetadata(headers);
-    headers.set('etag', object.httpEtag);
-    
-    return new Response(object.body, {
-      headers
-    });
-  } catch (error) {
-    return new Response('Error serving file: ' + error.message, { status: 500 });
+function renderMasterViewHtml(url, allTodos, deletedTodos, keptItems, shareLinks, isRootView) {
+  const origin = url.origin;
+
+  let creatorId = 'admin';
+  if (!isRootView) {
+    const pathSegment = url.pathname.substring(1).split('/')[0].toLowerCase();
+    creatorId = shareLinks[pathSegment]?.username || 'unknown';
   }
+
+  const allListItems = allTodos.map(todo => {
+    const ownerDisplayName = todo.ownerId === 'public' ? '' : getDisplayName(todo.ownerId);
+    const ownerInfo = ownerDisplayName ? ` | 指派给: <strong>${ownerDisplayName}</strong>` : '';
+    const creatorDisplayName = getDisplayName(todo.creatorId || 'unknown');
+    const completionInfo = todo.completed ? ` | 由 <strong>${getDisplayName(todo.completedBy)}</strong> 在 ${formatDate(todo.completedAt)} 完成` : '';
+    
+    const imageUrlHtml = todo.imageUrl ? `<img src="${todo.imageUrl}" alt="Todo Image" class="w-16 h-16 object-cover rounded-md mr-4">` : '';
+    return `
+    <li data-id="${todo.id}" data-owner="${todo.ownerId}" class="todo-item ${todo.completed ? 'completed' : ''}">
+      <input type="checkbox" id="todo-${todo.id}" ${todo.completed ? 'checked' : ''} onchange="toggleTodo('${todo.id}', this.checked, '${todo.ownerId}')">
+      ${imageUrlHtml}
+      <div class="flex-grow">
+        <label for="todo-${todo.id}">${todo.text}</label>
+        <div class="meta-info">由 <strong>${creatorDisplayName}</strong> 在 ${formatDate(todo.createdAt)} 创建${ownerInfo}${completionInfo}</div>
+      </div>
+      <button class="delete-btn" onclick="deleteTodo('${todo.id}', '${todo.ownerId}')">×</button>
+    </li>
+  `}).join('');
+
+  const todoOptions = allTodos.map(todo => `
+    <option value="${todo.id}">${todo.text} (由 ${getDisplayName(todo.creatorId)} 创建)</option>
+  `).join('');
+
+  const deletedListItems = deletedTodos.sort((a,b) => new Date(b.deletedAt) - new Date(a.deletedAt)).map(todo => {
+      const ownerDisplayName = todo.ownerId === 'public' ? '' : getDisplayName(todo.ownerId);
+      const ownerInfo = ownerDisplayName ? ` | 指派给: <strong>${ownerDisplayName}</strong>` : '';
+      const creatorDisplayName = getDisplayName(todo.creatorId || 'unknown');
+      const completionInfo = todo.completed ? ` | 由 <strong>${getDisplayName(todo.completedBy)}</strong> 在 ${formatDate(todo.completedAt)} 完成` : '';
+      const deletionInfo = ` | 由 <strong>${getDisplayName(todo.deletedBy)}</strong> 在 ${formatDate(todo.deletedAt)} 删除`;
+
+      return `
+      <li class="todo-item opacity-60">
+        <div class="flex-grow">
+          <label class="${todo.completed ? 'line-through' : ''}">${todo.text}</label>
+          <div class="meta-info">由 <strong>${creatorDisplayName}</strong> 在 ${formatDate(todo.createdAt)} 创建${ownerInfo}${completionInfo}${deletionInfo}</div>
+        </div>
+      </li>
+      `;
+  }).join('');
+
+  const userOptions = Object.values(shareLinks).map(link => 
+    `<label class="flex items-center space-x-2 font-normal">
+        <input type="checkbox" name="userIds" value="${link.username}" class="rounded border-gray-300 text-blue-600 shadow-sm focus:border-blue-300 focus:ring focus:ring-blue-200 focus:ring-opacity-50">
+        <span>${getDisplayName(link.username)}</span>
+    </label>`
+  ).join('');
+
+  let userManagementHtml = '';
+  if (isRootView) {
+    const linkItems = Object.entries(shareLinks).map(([token, data]) => `
+      <li class="flex justify-between items-center py-2 border-b">
+        <div>
+          <p class="font-medium text-gray-800">${getDisplayName(data.username)}</p>
+          <a href="/${token}" class="text-sm text-blue-600 hover:underline" target="_blank">${origin}/${token}</a>
+        </div>
+        <button class="ml-4 delete-link-btn" onclick="deleteUser('${token}')">删除用户</button>
+      </li>
+    `).join('');
+
+    userManagementHtml = `
+      <div class="bg-white p-6 rounded-xl shadow-lg">
+        <h2 class="text-2xl font-semibold mb-4 text-gray-800">用户管理</h2>
+        <div class="grid grid-cols-1 md:grid-cols-2 gap-8">
+          <div>
+            <h3 class="text-lg font-semibold mb-2">新增用户</h3>
+            <form action="/add_user" method="POST" class="flex space-x-2">
+              <input type="text" name="username" placeholder="新用户名..." required class="flex-grow p-2 border rounded-lg">
+              <button type="submit" class="bg-green-500 hover:bg-green-600 text-white font-semibold py-2 px-4 rounded-lg">创建</button>
+            </form>
+          </div>
+          <div>
+            <h3 class="text-lg font-semibold mb-2">现有用户 (${Object.keys(shareLinks).length})</h3>
+            <ul class="space-y-2">
+              ${linkItems || '<li class="text-gray-500">暂无用户。</li>'}
+            </ul>
+          </div>
+        </div>
+      </div>`;
+  }
+
+  const keptItemsListItems = keptItems.sort((a, b) => new Date(b.createdAt) - new Date(a.createdAt)).map(item => {
+    const associatedTodo = allTodos.find(todo => todo.id === item.todoId);
+    const todoInfo = associatedTodo ? ` | 关联待办: <strong>${associatedTodo.text}</strong>` : '';
+    const imageUrlHtml = item.imageUrl ? `<img src="${item.imageUrl}" alt="Item Image" class="w-16 h-16 object-cover rounded-md mr-4">` : '';
+    return `
+      <li data-id="${item.id}" class="todo-item">
+        ${imageUrlHtml}
+        <div class="flex-grow">
+          <label>${item.name}</label>
+          <div class="meta-info">保管人: <strong>${item.keeper}</strong> 在 ${formatDate(item.createdAt)} 保管${todoInfo}</div>
+        </div>
+        <button class="delete-btn" onclick="deleteItem('${item.id}')">×</button>
+      </li>
+    `;
+  }).join('');
+
+  const clientScript = `
+        async function toggleTodo(id, isChecked, ownerId) {
+          try {
+            const response = await fetch('/update_todo', {
+              method: 'PUT',
+              headers: { 'Content-Type': 'application/json' },
+              body: JSON.stringify({ id, completed: isChecked, ownerId }),
+            });
+            if (!response.ok) throw new Error('Update failed');
+            window.location.reload();
+          } catch (error) {
+            console.error("Update failed:", error);
+            alert('Update failed, please try again.');
+          }
+        }
+
+        async function deleteTodo(id, ownerId) {
+          if (!confirm('确定要删除用户 ' + ownerId + ' 的此事项吗？')) return;
+          try {
+            const response = await fetch('/delete_todo', {
+              method: 'DELETE',
+              headers: { 'Content-Type': 'application/json' },
+              body: JSON.stringify({ id, ownerId }),
+            });
+            if (!response.ok) throw new Error('Delete failed');
+            window.location.reload();
+          } catch (error) {
+            console.error("Delete failed:", error);
+            alert('Delete failed, please try again.');
+          }
+        }
+
+        async function deleteUser(token) {
+          if (!confirm('确定要删除此用户吗？其个人链接将失效。')) return;
+          try {
+            const response = await fetch('/delete_user', {
+              method: 'DELETE',
+              headers: { 'Content-Type': 'application/json' },
+              body: JSON.stringify({ token }),
+            });
+            if (!response.ok) throw new Error('Delete user failed');
+            window.location.reload();
+          } catch (error) {
+            console.error("Delete user failed:", error);
+            alert('Delete user failed, please try again.');
+          }
+        }
+
+        // 物品保管功能的前端逻辑
+        document.addEventListener('DOMContentLoaded', () => {
+          const addItemForm = document.getElementById('add-item-form');
+          if (addItemForm) {
+            addItemForm.addEventListener('submit', async (e) => {
+              e.preventDefault();
+              const name = document.getElementById('item-name').value;
+              const keeper = document.getElementById('item-keeper').value;
+              const todoId = document.getElementById('item-todo-id').value;
+              const imageFile = document.getElementById('item-image').files[0];
+
+              const formData = new FormData();
+              formData.append('name', name);
+              formData.append('keeper', keeper);
+              formData.append('todoId', todoId);
+              if (imageFile) {
+                formData.append('image', imageFile);
+              }
+
+              try {
+                const response = await fetch('/add_item', {
+                  method: 'POST',
+                  body: formData,
+                });
+                if (!response.ok) throw new Error('Add item failed');
+                window.location.reload();
+              } catch (error) {
+                console.error("Add item failed:", error);
+                alert('Add item failed, please try again.');
+              }
+            });
+          }
+
+          const addTodoForm = document.getElementById('add-todo-form');
+          if (addTodoForm) {
+            addTodoForm.addEventListener('submit', async (e) => {
+              e.preventDefault();
+              const text = addTodoForm.querySelector('input[name="text"]').value;
+              const imageFile = addTodoForm.querySelector('input[name="image"]').files[0];
+              const creatorId = addTodoForm.querySelector('input[name="creatorId"]').value;
+              const userIds = Array.from(addTodoForm.querySelectorAll('input[name="userIds"]:checked')).map(cb => cb.value);
+
+              const formData = new FormData();
+              formData.append('text', text);
+              formData.append('creatorId', creatorId);
+              userIds.forEach(id => formData.append('userIds', id));
+              if (imageFile) {
+                formData.append('image', imageFile);
+              }
+
+              try {
+                const response = await fetch('/add_todo', {
+                  method: 'POST',
+                  body: formData,
+                });
+                if (!response.ok) throw new Error('Add todo failed');
+                window.location.reload();
+              } catch (error) {
+                console.error("Add todo failed:", error);
+                alert('Add todo failed, please try again.');
+              }
+            });
+          }
+        });
+
+        async function deleteItem(id) {
+          if (!confirm('确定要删除此保管物品吗？')) return;
+          try {
+            const response = await fetch('/delete_item', {
+              method: 'DELETE',
+              headers: { 'Content-Type': 'application/json' },
+              body: JSON.stringify({ id }),
+            });
+            if (!response.ok) throw new Error('Delete item failed');
+            window.location.reload();
+          } catch (error) {
+            console.error("Delete item failed:", error);
+            alert('Delete item failed, please try again.');
+          }
+        }
+  `;
+
+  return `
+    <!DOCTYPE html>
+    <html lang="zh">
+    <head>
+      <meta charset="UTF-8">
+      <meta name="viewport" content="width=device-width, initial-scale=1.0">
+      <title>全局待办事项清单</title>
+      <script src="https://cdn.tailwindcss.com"></script>
+      <style>
+        body { font-family: 'Inter', sans-serif; background-color: #f4f5f7; }
+        .completed label { text-decoration: line-through; color: #9ca3af; }
+        .todo-item { display: flex; align-items: center; padding: 12px; background: white; border-radius: 8px; box-shadow: 0 1px 2px rgba(0,0,0,0.05); }
+        .todo-item input[type="checkbox"] { width: 18px; height: 18px; margin-right: 12px; flex-shrink: 0; cursor: pointer; }
+        .todo-item label { flex-grow: 1; font-size: 1.05em; }
+        .meta-info { font-size: 0.8em; color: #6b7280; }
+        .delete-btn, .delete-link-btn {
+            background-color: #ef4444; color: white; border: none; padding: 4px 10px; border-radius: 6px; font-weight: bold; cursor: pointer; transition: background-color 0.2s;
+        }
+        .delete-btn:hover, .delete-link-btn:hover { background-color: #dc2626; }
+      </style>
+    </head>
+    <body class="p-4 md:p-8">
+      <div class="container mx-auto max-w-4xl space-y-10">
+        
+        <h1 class="text-4xl font-bold text-center text-gray-900">全局待办事项清单</h1>
+
+        <!-- 添加事项的表单 -->
+        <div class="bg-white p-6 rounded-xl shadow-lg">
+          <h2 class="text-2xl font-semibold mb-4 text-gray-800">添加新事项</h2>
+          <form id="add-todo-form" action="/add_todo" method="POST" enctype="multipart/form-data">
+            <input type="hidden" name="creatorId" value="${creatorId}">
+            <div class="grid grid-cols-1 md:grid-cols-5 gap-4">
+              <input type="text" name="text" placeholder="输入新的待办事项..." required class="md:col-span-3 p-3 border rounded-lg">
+              <input type="file" name="image" accept="image/*" class="md:col-span-2 p-3 border rounded-lg">
+              
+              <div class="md:col-span-5 p-3 border rounded-lg bg-gray-50">
+                <h3 class="text-base font-semibold mb-2 text-gray-700">指派给 (可多选)</h3>
+                <div class="space-y-2 max-h-24 overflow-y-auto">
+                    <label class="flex items-center space-x-2 font-normal">
+                        <input type="checkbox" name="userIds" value="public" class="rounded border-gray-300 text-blue-600 shadow-sm focus:border-blue-300 focus:ring focus:ring-blue-200 focus:ring-opacity-50">
+                        <span>Public (无指定用户)</span>
+                    </label>
+                    ${userOptions}
+                </div>
+              </div>
+            </div>
+            <button type="submit" class="mt-4 w-full bg-blue-500 hover:bg-blue-600 text-white font-semibold py-3 px-6 rounded-lg">添加</button>
+          </form>
+        </div>
+
+        <!-- 待办事项列表 -->
+        <div class="bg-white p-6 rounded-xl shadow-lg">
+          <h2 class="text-2xl font-semibold mb-4 text-gray-800">所有事项</h2>
+          <ul id="all-todos-list" class="space-y-3">
+            ${allListItems || '<p class="text-center text-gray-500 py-10">无任何待办事项。</p>'}
+          </ul>
+        </div>
+
+        <!-- 用户管理区域 -->
+        ${userManagementHtml}
+
+        <!-- 最近删除 -->
+        <div class="bg-white p-6 rounded-xl shadow-lg">
+          <h2 class="text-2xl font-semibold mb-4 text-gray-800">最近删除 (5天内)</h2>
+          <ul id="deleted-todos-list" class="space-y-3">
+            ${deletedListItems || '<p class="text-center text-gray-500 py-10">无已删除事项。</p>'}
+          </ul>
+        </div>
+
+        <!-- 物品保管区域 -->
+        <div class="bg-white p-6 rounded-xl shadow-lg">
+          <h2 class="text-2xl font-semibold mb-4 text-gray-800">物品保管</h2>
+          <div>
+            <h3 class="text-lg font-semibold mb-2">新增保管物品</h3>
+            <form id="add-item-form" class="space-y-4">
+              <input type="text" id="item-name" name="name" placeholder="物品名称..." required class="w-full p-3 border rounded-lg">
+              <input type="text" id="item-keeper" name="keeper" placeholder="保管人..." required class="w-full p-3 border rounded-lg">
+              <select id="item-todo-id" name="todoId" class="w-full p-3 border rounded-lg">
+                <option value="">选择关联待办事项 (可选)</option>
+                ${todoOptions}
+              </select>
+              <button type="submit" class="w-full bg-purple-500 hover:bg-purple-600 text-white font-semibold py-3 px-6 rounded-lg">添加保管物品</button>
+            </form>
+          </div>
+          <div class="mt-8">
+            <h3 class="text-lg font-semibold mb-2">当前保管物品</h3>
+            <ul id="kept-items-list" class="space-y-3">
+              ${keptItemsListItems || '<p class="text-center text-gray-500 py-10">无任何保管物品。</p>'}
+            </ul>
+          </div>
+        </div>
+
+      </div>
+
+      <script>${clientScript}</script>
+    </body>
+    </html>
+  `;
 }
