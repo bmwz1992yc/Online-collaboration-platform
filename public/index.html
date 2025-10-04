@@ -1,0 +1,102 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Workers TaskFlow</title>
+    <link rel="stylesheet" href="styles.css">
+</head>
+<body>
+    <header>
+        <h1>Workers TaskFlow</h1>
+        <div id="user-info"></div>
+    </header>
+
+    <main>
+        <section id="tasks-section">
+            <h2>任务管理</h2>
+            <div id="task-form-container">
+                <form id="task-form">
+                    <input type="hidden" id="task-id">
+                    <div>
+                        <label for="task-title">标题:</label>
+                        <input type="text" id="task-title" required>
+                    </div>
+                    <div>
+                        <label for="task-description">描述:</label>
+                        <textarea id="task-description"></textarea>
+                    </div>
+                    <div>
+                        <label for="task-status">状态:</label>
+                        <select id="task-status">
+                            <option value="To Do">待办</option>
+                            <option value="In Progress">进行中</option>
+                            <option value="Completed">已完成</option>
+                        </select>
+                    </div>
+                    <div>
+                        <label for="task-progress">进度:</label>
+                        <input type="range" id="task-progress" min="0" max="100" value="0">
+                        <span id="progress-value">0%</span>
+                    </div>
+                    <div>
+                        <label for="task-due-date">截止日期:</label>
+                        <input type="date" id="task-due-date">
+                    </div>
+                    <button type="submit">保存任务</button>
+                    <button type="button" id="cancel-edit">取消</button>
+                </form>
+            </div>
+            <div id="tasks-list"></div>
+        </section>
+
+        <section id="assets-section">
+            <h2>资产管理</h2>
+            <div id="asset-form-container">
+                <form id="asset-form">
+                    <input type="hidden" id="asset-id">
+                    <div>
+                        <label for="asset-name">物品名称:</label>
+                        <input type="text" id="asset-name" required>
+                    </div>
+                    <div>
+                        <label for="asset-owner">当前保管人:</label>
+                        <select id="asset-owner"></select>
+                    </div>
+                    <div>
+                        <label for="asset-image">物品图片:</label>
+                        <input type="file" id="asset-image" accept="image/*">
+                        <input type="hidden" id="asset-image-key">
+                    </div>
+                    <button type="submit">登记物品</button>
+                    <button type="button" id="cancel-asset-edit">取消</button>
+                </form>
+            </div>
+            <div id="assets-list"></div>
+        </section>
+
+        <section id="users-section" class="admin-only">
+            <h2>用户管理</h2>
+            <div id="user-form-container">
+                <form id="user-form">
+                    <div>
+                        <label for="user-username">用户名:</label>
+                        <input type="text" id="user-username" required>
+                    </div>
+                    <div>
+                        <label for="user-role">角色:</label>
+                        <select id="user-role">
+                            <option value="member">成员</option>
+                            <option value="admin">管理员</option>
+                        </select>
+                    </div>
+                    <button type="submit">添加用户</button>
+                </form>
+            </div>
+            <div id="users-list"></div>
+        </section>
+    </main>
+
+    <script src="script.js"></script>
+</body>
+</html>
