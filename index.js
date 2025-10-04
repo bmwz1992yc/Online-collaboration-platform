@@ -744,16 +744,43 @@ async function handleUserSubmit(event) {
 }
 `;
 
+async function ensureAdminUser(env) {
+  const usersObject = await env.R2_BUCKET.get('config:share_links');
+  let users = {};
+  if (usersObject !== null) {
+    users = JSON.parse(await usersObject.text());
+  }
+
+  let adminUser = Object.values(users).find(u => u.role === 'admin');
+
+  if (!adminUser) {
+    adminUser = {
+      username: 'admin',
+      role: 'admin',
+      token: Math.random().toString(36).substring(2, 15) + Math.random().toString(36).substring(2, 15)
+    };
+    users[adminUser.username] = adminUser;
+    await env.R2_BUCKET.put('config:share_links', JSON.stringify(users));
+    console.log('Default admin user created:', adminUser);
+  }
+  return adminUser;
+}
+
 export default {
   async fetch(request, env) {
     const url = new URL(request.url);
     const path = url.pathname;
+
+    // Ensure admin user exists on every request (can be optimized for production)
+    const adminUser = await ensureAdminUser(env);
     
     // Serve index.html for the root path
     if (path === '/') {
-      return new Response(indexHtmlContent, {
-        headers: { 'Content-Type': 'text/html' }
-      });
+      // If accessing root, redirect to admin page with token
+      const adminUser = await ensureAdminUser(env); // ensureAdminUser is already called at the top of fetch
+      const adminUrl = new URL(request.url);
+      adminUrl.pathname = `/admin/${adminUser.token}`;
+      return Response.redirect(adminUrl.toString(), 302);
     }
 
     // Serve static assets
@@ -776,10 +803,14 @@ export default {
         return handleApiGetRequest(path, request, env);
       }
       
-      // Remove authentication routes for /admin/ and /app/ as the root is now the admin page
-      // if (path.startsWith('/admin/') || path.startsWith('/app/')) {
-      //   return new Response('Frontend should handle authentication via URL token.', { status: 200 });
-      // }
+      // Handle /admin/token and /member/token paths
+      if (path.startsWith('/admin/') || path.startsWith('/member/')) {
+        // The frontend script.js will handle the actual authentication via /api/users/auth
+        // This just ensures the path is valid for the frontend to pick up the token
+        return new Response(indexHtmlContent, {
+          headers: { 'Content-Type': 'text/html' }
+        });
+      }
     } else if (request.method === 'POST') {
       if (path.startsWith('/api/')) {
         return handleApiPostRequest(path, request, env);
@@ -793,12 +824,6 @@ export default {
     return new Response('Not Found', { status: 404 });
   }
 };
-
-// handleAuthRoute is no longer needed as authentication is handled by the frontend
-// and the root path is the admin page.
-// async function handleAuthRoute(path, request, env) {
-//   // ... (original content of handleAuthRoute)
-// }
 
 // Handle API GET requests
 async function handleApiGetRequest(path, request, env) {

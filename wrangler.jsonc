@@ -5,7 +5,7 @@
   "compatibility_flags": [ "nodejs_compat" ],
   "workers_dev": true,
   "vars": {
-    "R2_BUCKET": "YOUR_R2_BUCKET_NAME"
+    "R2_BUCKET": "online-collaboration-platform"
     // 在这里定义环境变量，例如：
     // "MY_VARIABLE": "my_value"
   }
