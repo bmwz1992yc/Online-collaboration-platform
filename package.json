@@ -1,0 +1,11 @@
+{
+  "name": "cloudflare-workers-todo-app",
+  "version": "0.0.0",
+  "private": true,
+  "scripts": {
+    "start": "wrangler dev"
+  },
+  "devDependencies": {
+    "wrangler": "^3.0.0"
+  }
+}
