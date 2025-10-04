@@ -687,8 +687,8 @@ function renderMasterViewHtml(url, allTodos, deletedTodos, keptItems, shareLinks
   }).join('');
 
   const userOptions = Object.values(shareLinks).map(link => 
-    `<label class="flex items-center space-x-2 font-normal">
-        <input type="checkbox" name="userIds" value="${link.username}" class="rounded border-gray-300 text-blue-600 shadow-sm focus:border-blue-300 focus:ring focus:ring-blue-200 focus:ring-opacity-50">
+    `<label class="flex items-center space-x-2">
+        <input type="checkbox" name="userIds" value="${link.username}" class="rounded border-gray-300 text-blue-600 focus:ring-blue-300">
         <span>${getDisplayName(link.username)}</span>
     </label>`
   ).join('');
@@ -706,24 +706,31 @@ function renderMasterViewHtml(url, allTodos, deletedTodos, keptItems, shareLinks
     `).join('');
 
     userManagementHtml = `
-      <div class="bg-white p-6 rounded-xl shadow-lg">
-        <h2 class="text-2xl font-semibold mb-4 text-gray-800">用户管理</h2>
+      <section class="card p-6">
+        <div class="flex items-center gap-2 mb-4">
+          <i data-lucide="users" class="w-6 h-6 text-green-600"></i>
+          <h2 class="text-2xl font-semibold text-gray-800">用户管理</h2>
+        </div>
         <div class="grid grid-cols-1 md:grid-cols-2 gap-8">
           <div>
             <h3 class="text-lg font-semibold mb-2">新增用户</h3>
             <form action="/add_user" method="POST" class="flex space-x-2">
-              <input type="text" name="username" placeholder="新用户名..." required class="flex-grow p-2 border rounded-lg">
-              <button type="submit" class="bg-green-500 hover:bg-green-600 text-white font-semibold py-2 px-4 rounded-lg">创建</button>
+              <input type="text" name="username" placeholder="新用户名..." required
+                     class="flex-grow p-2 border rounded-lg focus:ring-2 focus:ring-green-300" />
+              <button type="submit"
+                      class="bg-green-500 text-white font-semibold py-2 px-4 rounded-lg">
+                创建
+              </button>
             </form>
           </div>
           <div>
-            <h3 class="text-lg font-semibold mb-2">现有用户 (${Object.keys(shareLinks).length})</h3>
-            <ul class="space-y-2">
-              ${linkItems || '<li class="text-gray-500">暂无用户。</li>'}
+            <h3 class="text-lg font-semibold mb-2">现有用户 (<span id="user-count">${Object.keys(shareLinks).length}</span>)</h3>
+            <ul id="user-list" class="space-y-2 text-sm text-gray-600">
+              ${linkItems || '<li class="text-gray-400">暂无用户。</li>'}
             </ul>
           </div>
         </div>
-      </div>`;
+      </section>`;
   }
 
   const keptItemsListItems = keptItems.sort((a, b) => new Date(b.createdAt) - new Date(a.createdAt)).map(item => {
@@ -743,230 +750,276 @@ function renderMasterViewHtml(url, allTodos, deletedTodos, keptItems, shareLinks
   }).join('');
 
   const clientScript = `
-        async function toggleTodo(id, isChecked, ownerId) {
+    lucide.createIcons();
+
+    async function toggleTodo(id, isChecked, ownerId) {
+      try {
+        const response = await fetch('/update_todo', {
+          method: 'PUT',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ id, completed: isChecked, ownerId }),
+        });
+        if (!response.ok) throw new Error('Update failed');
+        window.location.reload();
+      } catch (error) {
+        console.error("Update failed:", error);
+        alert('Update failed, please try again.');
+      }
+    }
+
+    async function deleteTodo(id, ownerId) {
+      if (!confirm('确定要删除用户 ' + ownerId + ' 的此事项吗？')) return;
+      try {
+        const response = await fetch('/delete_todo', {
+          method: 'DELETE',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ id, ownerId }),
+        });
+        if (!response.ok) throw new Error('Delete failed');
+        window.location.reload();
+      } catch (error) {
+        console.error("Delete failed:", error);
+        alert('Delete failed, please try again.');
+      }
+    }
+
+    async function deleteUser(token) {
+      if (!confirm('确定要删除此用户吗？其个人链接将失效。')) return;
+      try {
+        const response = await fetch('/delete_user', {
+          method: 'DELETE',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ token }),
+        });
+        if (!response.ok) throw new Error('Delete user failed');
+        window.location.reload();
+      } catch (error) {
+        console.error("Delete user failed:", error);
+        alert('Delete user failed, please try again.');
+      }
+    }
+
+    // 物品保管功能的前端逻辑
+    document.addEventListener('DOMContentLoaded', () => {
+      const addItemForm = document.getElementById('add-item-form');
+      if (addItemForm) {
+        addItemForm.addEventListener('submit', async (e) => {
+          e.preventDefault();
+          const name = document.getElementById('item-name').value;
+          const keeper = Array.from(document.querySelectorAll('#item-keeper-checkboxes input[name="itemUserIds"]:checked')).map(cb => cb.value);
+          const todoId = document.getElementById('item-todo-id').value;
+          const imageFile = document.getElementById('item-image').files[0];
+
+          const formData = new FormData();
+          formData.append('name', name);
+          keeper.forEach(k => formData.append('keeper', k));
+          formData.append('todoId', todoId);
+          if (imageFile) {
+            formData.append('image', imageFile);
+          }
+
           try {
-            const response = await fetch('/update_todo', {
-              method: 'PUT',
-              headers: { 'Content-Type': 'application/json' },
-              body: JSON.stringify({ id, completed: isChecked, ownerId }),
+            const response = await fetch('/add_item', {
+              method: 'POST',
+              body: formData,
             });
-            if (!response.ok) throw new Error('Update failed');
+            if (!response.ok) throw new Error('Add item failed');
             window.location.reload();
           } catch (error) {
-            console.error("Update failed:", error);
-            alert('Update failed, please try again.');
-          }
-        }
-
-        async function deleteTodo(id, ownerId) {
-          if (!confirm('确定要删除用户 ' + ownerId + ' 的此事项吗？')) return;
-          try {
-            const response = await fetch('/delete_todo', {
-              method: 'DELETE',
-              headers: { 'Content-Type': 'application/json' },
-              body: JSON.stringify({ id, ownerId }),
-            });
-            if (!response.ok) throw new Error('Delete failed');
-            window.location.reload();
-          } catch (error) {
-            console.error("Delete failed:", error);
-            alert('Delete failed, please try again.');
-          }
-        }
-
-        async function deleteUser(token) {
-          if (!confirm('确定要删除此用户吗？其个人链接将失效。')) return;
-          try {
-            const response = await fetch('/delete_user', {
-              method: 'DELETE',
-              headers: { 'Content-Type': 'application/json' },
-              body: JSON.stringify({ token }),
-            });
-            if (!response.ok) throw new Error('Delete user failed');
-            window.location.reload();
-          } catch (error) {
-            console.error("Delete user failed:", error);
-            alert('Delete user failed, please try again.');
-          }
-        }
-
-        // 物品保管功能的前端逻辑
-        document.addEventListener('DOMContentLoaded', () => {
-          const addItemForm = document.getElementById('add-item-form');
-          if (addItemForm) {
-            addItemForm.addEventListener('submit', async (e) => {
-              e.preventDefault();
-              const name = document.getElementById('item-name').value;
-              const keeper = document.getElementById('item-keeper').value;
-              const todoId = document.getElementById('item-todo-id').value;
-              const imageFile = document.getElementById('item-image').files[0];
-
-              const formData = new FormData();
-              formData.append('name', name);
-              formData.append('keeper', keeper);
-              formData.append('todoId', todoId);
-              if (imageFile) {
-                formData.append('image', imageFile);
-              }
-
-              try {
-                const response = await fetch('/add_item', {
-                  method: 'POST',
-                  body: formData,
-                });
-                if (!response.ok) throw new Error('Add item failed');
-                window.location.reload();
-              } catch (error) {
-                console.error("Add item failed:", error);
-                alert('Add item failed, please try again.');
-              }
-            });
-          }
-
-          const addTodoForm = document.getElementById('add-todo-form');
-          if (addTodoForm) {
-            addTodoForm.addEventListener('submit', async (e) => {
-              e.preventDefault();
-              const text = addTodoForm.querySelector('input[name="text"]').value;
-              const imageFile = addTodoForm.querySelector('input[name="image"]').files[0];
-              const creatorId = addTodoForm.querySelector('input[name="creatorId"]').value;
-              const userIds = Array.from(addTodoForm.querySelectorAll('input[name="userIds"]:checked')).map(cb => cb.value);
-
-              const formData = new FormData();
-              formData.append('text', text);
-              formData.append('creatorId', creatorId);
-              userIds.forEach(id => formData.append('userIds', id));
-              if (imageFile) {
-                formData.append('image', imageFile);
-              }
-
-              try {
-                const response = await fetch('/add_todo', {
-                  method: 'POST',
-                  body: formData,
-                });
-                if (!response.ok) throw new Error('Add todo failed');
-                window.location.reload();
-              } catch (error) {
-                console.error("Add todo failed:", error);
-                alert('Add todo failed, please try again.');
-              }
-            });
+            console.error("Add item failed:", error);
+            alert('Add item failed, please try again.');
           }
         });
+      }
 
-        async function deleteItem(id) {
-          if (!confirm('确定要删除此保管物品吗？')) return;
+      const addTodoForm = document.querySelector('form[action="/add_todo"]');
+      if (addTodoForm) {
+        addTodoForm.addEventListener('submit', async (e) => {
+          e.preventDefault();
+          const text = addTodoForm.querySelector('input[name="text"]').value;
+          const imageFile = addTodoForm.querySelector('input[name="image"]').files[0];
+          const creatorId = addTodoForm.querySelector('input[name="creatorId"]').value;
+          const userIds = Array.from(addTodoForm.querySelectorAll('input[name="userIds"]:checked')).map(cb => cb.value);
+
+          const formData = new FormData();
+          formData.append('text', text);
+          formData.append('creatorId', creatorId);
+          userIds.forEach(id => formData.append('userIds', id));
+          if (imageFile) {
+            formData.append('image', imageFile);
+          }
+
           try {
-            const response = await fetch('/delete_item', {
-              method: 'DELETE',
-              headers: { 'Content-Type': 'application/json' },
-              body: JSON.stringify({ id }),
+            const response = await fetch('/add_todo', {
+              method: 'POST',
+              body: formData,
             });
-            if (!response.ok) throw new Error('Delete item failed');
+            if (!response.ok) throw new Error('Add todo failed');
             window.location.reload();
           } catch (error) {
-            console.error("Delete item failed:", error);
-            alert('Delete item failed, please try again.');
+            console.error("Add todo failed:", error);
+            alert('Add todo failed, please try again.');
           }
-        }
+        });
+      }
+    });
+
+    async function deleteItem(id) {
+      if (!confirm('确定要删除此保管物品吗？')) return;
+      try {
+        const response = await fetch('/delete_item', {
+          method: 'DELETE',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ id }),
+        });
+        if (!response.ok) throw new Error('Delete item failed');
+        window.location.reload();
+      } catch (error) {
+        console.error("Delete item failed:", error);
+        alert('Delete item failed, please try again.');
+      }
+    }
   `;
 
   return `
     <!DOCTYPE html>
     <html lang="zh">
     <head>
-      <meta charset="UTF-8">
-      <meta name="viewport" content="width=device-width, initial-scale=1.0">
+      <meta charset="UTF-8" />
+      <meta name="viewport" content="width=device-width, initial-scale=1.0" />
       <title>全局待办事项清单</title>
       <script src="https://cdn.tailwindcss.com"></script>
+      <script src="https://unpkg.com/lucide@latest"></script>
       <style>
-        body { font-family: 'Inter', sans-serif; background-color: #f4f5f7; }
-        .completed label { text-decoration: line-through; color: #9ca3af; }
-        .todo-item { display: flex; align-items: center; padding: 12px; background: white; border-radius: 8px; box-shadow: 0 1px 2px rgba(0,0,0,0.05); }
-        .todo-item input[type="checkbox"] { width: 18px; height: 18px; margin-right: 12px; flex-shrink: 0; cursor: pointer; }
-        .todo-item label { flex-grow: 1; font-size: 1.05em; }
-        .meta-info { font-size: 0.8em; color: #6b7280; }
-        .delete-btn, .delete-link-btn {
-            background-color: #ef4444; color: white; border: none; padding: 4px 10px; border-radius: 6px; font-weight: bold; cursor: pointer; transition: background-color 0.2s;
+        body {
+          background: linear-gradient(135deg, #eef2ff, #f8f9ff, #e0e7ff);
+          min-height: 100vh;
+          font-family: 'Inter', 'Noto Sans SC', sans-serif;
         }
-        .delete-btn:hover, .delete-link-btn:hover { background-color: #dc2626; }
+        .card {
+          background: rgba(255, 255, 255, 0.9);
+          backdrop-filter: blur(6px);
+          border: 1px solid rgba(255, 255, 255, 0.4);
+          border-radius: 1rem;
+          box-shadow: 0 4px 16px rgba(0, 0, 0, 0.05);
+        }
       </style>
     </head>
-    <body class="p-4 md:p-8">
-      <div class="container mx-auto max-w-4xl space-y-10">
+    <body class="p-4 md:p-8 text-gray-800">
+      <div class="container mx-auto space-y-10">
         
-        <h1 class="text-4xl font-bold text-center text-gray-900">全局待办事项清单</h1>
+        <!-- 页头 -->
+        <header class="text-center space-y-3">
+          <h1 class="text-4xl font-bold tracking-tight bg-gradient-to-r from-blue-500 to-purple-600 bg-clip-text text-transparent">
+            全局待办事项清单
+          </h1>
+          <p class="text-gray-600 text-sm">集中管理任务、物品交接与用户信息</p>
+        </header>
 
-        <!-- 添加事项的表单 -->
-        <div class="bg-white p-6 rounded-xl shadow-lg">
-          <h2 class="text-2xl font-semibold mb-4 text-gray-800">添加新事项</h2>
-          <form id="add-todo-form" action="/add_todo" method="POST" enctype="multipart/form-data">
-            <input type="hidden" name="creatorId" value="${creatorId}">
-            <div class="grid grid-cols-1 md:grid-cols-5 gap-4">
-              <input type="text" name="text" placeholder="输入新的待办事项..." required class="md:col-span-3 p-3 border rounded-lg">
-              <input type="file" name="image" accept="image/*" class="md:col-span-2 p-3 border rounded-lg">
-              
-              <div class="md:col-span-5 p-3 border rounded-lg bg-gray-50">
-                <h3 class="text-base font-semibold mb-2 text-gray-700">指派给 (可多选)</h3>
-                <div class="space-y-2 max-h-24 overflow-y-auto">
-                    <label class="flex items-center space-x-2 font-normal">
-                        <input type="checkbox" name="userIds" value="public" class="rounded border-gray-300 text-blue-600 shadow-sm focus:border-blue-300 focus:ring focus:ring-blue-200 focus:ring-opacity-50">
-                        <span>Public (无指定用户)</span>
-                    </label>
-                    ${userOptions}
+        <!-- 添加事项 + 物品交接 -->
+        <div class="grid grid-cols-1 lg:grid-cols-2 gap-8">
+          
+          <!-- 添加事项 -->
+          <section class="card p-6 space-y-4">
+            <div class="flex items-center gap-2 mb-2">
+              <i data-lucide="plus-circle" class="w-5 h-5 text-blue-600"></i>
+              <h2 class="text-lg font-semibold text-blue-700">添加新事项</h2>
+            </div>
+            <form action="/add_todo" method="POST" class="space-y-3" enctype="multipart/form-data">
+              <input type="hidden" name="creatorId" value="${creatorId}" />
+              <input type="text" name="text" placeholder="输入新的待办事项..." required
+                     class="w-full p-2 border rounded-lg focus:ring-2 focus:ring-blue-300" />
+              <input type="file" name="image" accept="image/*"
+                     class="w-full text-sm border rounded-lg p-1" />
+              <div class="p-3 bg-gray-50 border rounded-lg">
+                <h3 class="text-sm font-semibold mb-1 text-gray-700">指派给 (可多选)</h3>
+                <div class="space-y-1 max-h-20 overflow-y-auto text-sm">
+                  <label class="flex items-center space-x-2">
+                    <input type="checkbox" name="userIds" value="public"
+                           class="rounded border-gray-300 text-blue-600 focus:ring-blue-300" />
+                    <span>Public (无指定用户)</span>
+                  </label>
+                  ${userOptions}
                 </div>
               </div>
+              <button type="submit"
+                      class="w-full bg-blue-600 text-white font-medium py-2 px-4 rounded-lg">
+                添加事项
+              </button>
+            </form>
+          </section>
+
+          <!-- 物品交接 -->
+          <section class="card p-6 space-y-4">
+            <div class="flex items-center gap-2 mb-2">
+              <i data-lucide="package" class="w-5 h-5 text-purple-600"></i>
+              <h2 class="text-lg font-semibold text-purple-700">物品交接</h2>
             </div>
-            <button type="submit" class="mt-4 w-full bg-blue-500 hover:bg-blue-600 text-white font-semibold py-3 px-6 rounded-lg">添加</button>
-          </form>
-        </div>
-
-        <!-- 待办事项列表 -->
-        <div class="bg-white p-6 rounded-xl shadow-lg">
-          <h2 class="text-2xl font-semibold mb-4 text-gray-800">所有事项</h2>
-          <ul id="all-todos-list" class="space-y-3">
-            ${allListItems || '<p class="text-center text-gray-500 py-10">无任何待办事项。</p>'}
-          </ul>
-        </div>
-
-        <!-- 用户管理区域 -->
-        ${userManagementHtml}
-
-        <!-- 最近删除 -->
-        <div class="bg-white p-6 rounded-xl shadow-lg">
-          <h2 class="text-2xl font-semibold mb-4 text-gray-800">最近删除 (5天内)</h2>
-          <ul id="deleted-todos-list" class="space-y-3">
-            ${deletedListItems || '<p class="text-center text-gray-500 py-10">无已删除事项。</p>'}
-          </ul>
-        </div>
-
-        <!-- 物品保管区域 -->
-        <div class="bg-white p-6 rounded-xl shadow-lg">
-          <h2 class="text-2xl font-semibold mb-4 text-gray-800">物品保管</h2>
-          <div>
-            <h3 class="text-lg font-semibold mb-2">新增保管物品</h3>
-            <form id="add-item-form" class="space-y-4">
-              <input type="text" id="item-name" name="name" placeholder="物品名称..." required class="w-full p-3 border rounded-lg">
-              <input type="text" id="item-keeper" name="keeper" placeholder="保管人..." required class="w-full p-3 border rounded-lg">
-              <select id="item-todo-id" name="todoId" class="w-full p-3 border rounded-lg">
+            <form id="add-item-form" class="space-y-3" enctype="multipart/form-data">
+              <input type="text" id="item-name" placeholder="物品名称..." required
+                     class="w-full p-2 border rounded-lg focus:ring-2 focus:ring-purple-300" />
+              <div class="p-3 bg-gray-50 border rounded-lg">
+                <h3 class="text-sm font-semibold mb-1 text-gray-700">持有人 (可多选)</h3>
+                <div id="item-keeper-checkboxes" class="space-y-1 max-h-20 overflow-y-auto text-sm">
+                  <label class="flex items-center space-x-2">
+                    <input type="checkbox" name="itemUserIds" value="public"
+                           class="rounded border-gray-300 text-purple-600 focus:ring-purple-300" />
+                    <span>Public (无指定用户)</span>
+                  </label>
+                  ${userOptions}
+                </div>
+              </div>
+              <input type="file" id="item-image" name="image" accept="image/*"
+                     class="w-full text-sm border rounded-lg p-1" />
+              <select id="item-todo-id" class="w-full p-2 border rounded-lg text-sm">
                 <option value="">选择关联待办事项 (可选)</option>
                 ${todoOptions}
               </select>
-              <button type="submit" class="w-full bg-purple-500 hover:bg-purple-600 text-white font-semibold py-3 px-6 rounded-lg">添加保管物品</button>
+              <button type="submit"
+                      class="w-full bg-purple-600 text-white font-medium py-2 px-4 rounded-lg">
+                添加交接物品
+              </button>
             </form>
-          </div>
-          <div class="mt-8">
-            <h3 class="text-lg font-semibold mb-2">当前保管物品</h3>
-            <ul id="kept-items-list" class="space-y-3">
-              ${keptItemsListItems || '<p class="text-center text-gray-500 py-10">无任何保管物品。</p>'}
-            </ul>
-          </div>
+
+            <div class="mt-4">
+              <h3 class="text-sm font-semibold mb-2 text-gray-700">当前交接物品</h3>
+              <ul id="kept-items-list" class="space-y-1 text-sm text-gray-500">
+                ${keptItemsListItems || '<p class="text-center py-4">无任何交接物品。</p>'}
+              </ul>
+            </div>
+          </section>
         </div>
+
+        <!-- 所有事项 -->
+        <section class="card p-6">
+          <div class="flex items-center gap-2 mb-4">
+            <i data-lucide="check-square" class="w-6 h-6 text-blue-600"></i>
+            <h2 class="text-2xl font-semibold text-gray-800">所有事项</h2>
+          </div>
+          <ul id="all-todos-list" class="space-y-3 text-sm">
+            ${allListItems || '<p class="text-center text-gray-500 py-10">无任何待办事项。</p>'}
+          </ul>
+        </section>
+
+        <!-- 用户管理 -->
+        ${userManagementHtml}
+
+        <!-- 最近删除 -->
+        <section class="card p-6">
+          <div class="flex items-center gap-2 mb-4">
+            <i data-lucide="trash-2" class="w-6 h-6 text-red-500"></i>
+            <h2 class="text-2xl font-semibold text-gray-800">最近删除 (5天内)</h2>
+          </div>
+          <ul id="deleted-todos-list" class="space-y-3 text-sm text-gray-500">
+            ${deletedListItems || '<p class="text-center py-10">无已删除事项。</p>'}
+          </ul>
+        </section>
 
       </div>
 
-      <script>${clientScript}</script>
+      <script>
+        ${clientScript}
+      </script>
     </body>
     </html>
   `;
