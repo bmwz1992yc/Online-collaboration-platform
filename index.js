@@ -771,56 +771,57 @@ export default {
     const url = new URL(request.url);
     const path = url.pathname;
 
-    // Ensure admin user exists on every request (can be optimized for production)
-    const adminUser = await ensureAdminUser(env);
-    
-    // Serve index.html for the root path
-    if (path === '/') {
-      // If accessing root, redirect to admin page with token
-      const adminUser = await ensureAdminUser(env); // ensureAdminUser is already called at the top of fetch
-      const adminUrl = new URL(request.url);
-      adminUrl.pathname = `/admin/${adminUser.token}`;
-      return Response.redirect(adminUrl.toString(), 302);
-    }
+    // Log all incoming requests for debugging
+    console.log('Incoming request path:', path);
 
-    // Serve static assets
+    // Serve static assets first
     if (path === '/styles.css') {
+      console.log('Serving styles.css');
       return new Response(stylesCssContent, {
         headers: { 'Content-Type': 'text/css' }
       });
     }
 
     if (path === '/script.js') {
+      console.log('Serving script.js');
       return new Response(scriptJsContent, {
         headers: { 'Content-Type': 'application/javascript' }
       });
     }
 
-    // Route handling
-    if (request.method === 'GET') {
-      // API routes for GET requests
-      if (path.startsWith('/api/')) {
-        return handleApiGetRequest(path, request, env);
+    // Serve index.html for the root path and authenticated paths
+    if (path === '/' || path.startsWith('/admin/') || path.startsWith('/member/')) {
+      // Ensure admin user exists on every request (can be optimized for production)
+      const adminUser = await ensureAdminUser(env);
+      
+      if (path === '/') {
+        // If accessing root, redirect to admin page with token
+        const adminUrl = new URL(request.url);
+        adminUrl.pathname = `/admin/${adminUser.token}`;
+        console.log('Redirecting root to admin path:', adminUrl.toString());
+        return Response.redirect(adminUrl.toString(), 302);
       }
       
-      // Handle /admin/token and /member/token paths
-      if (path.startsWith('/admin/') || path.startsWith('/member/')) {
-        // The frontend script.js will handle the actual authentication via /api/users/auth
-        // This just ensures the path is valid for the frontend to pick up the token
-        return new Response(indexHtmlContent, {
-          headers: { 'Content-Type': 'text/html' }
-        });
-      }
-    } else if (request.method === 'POST') {
-      if (path.startsWith('/api/')) {
+      console.log('Serving indexHtmlContent for path:', path);
+      return new Response(indexHtmlContent, {
+        headers: { 'Content-Type': 'text/html' }
+      });
+    }
+
+    // Route handling for API
+    if (path.startsWith('/api/')) {
+      if (request.method === 'GET') {
+        return handleApiGetRequest(path, request, env);
+      } else if (request.method === 'POST') {
         return handleApiPostRequest(path, request, env);
-      }
-    } else if (request.method === 'DELETE') {
-      if (path.startsWith('/api/tasks/')) {
-        return handleApiDeleteRequest(path, request, env);
+      } else if (request.method === 'DELETE') {
+        if (path.startsWith('/api/tasks/')) {
+          return handleApiDeleteRequest(path, request, env);
+        }
       }
     }
     
+    console.log('Path not found:', path);
     return new Response('Not Found', { status: 404 });
   }
 };
@@ -1104,7 +1105,7 @@ async function addUser(request, env) {
     
     if (usersObject !== null) {
       const usersData = await usersObject.text();
-      users = JSON.parse(userData);
+      users = JSON.parse(usersData);
     }
     
     // Add new user
