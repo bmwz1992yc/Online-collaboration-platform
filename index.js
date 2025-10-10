@@ -483,9 +483,10 @@ async function handleAddTodo(request, url, env) {
     // Compress image before storing
     const compressedImage = await compressImage(imageFile);
     const imageId = crypto.randomUUID();
-    const imageKey = `images/${imageId}-${imageFile.name}`;
+    const extension = imageFile.name.split('.').pop();
+    const imageKey = `images/${imageId}.${extension}`;
     await env.R2_BUCKET.put(imageKey, compressedImage, { httpMetadata: { contentType: imageFile.type } });
-    imageUrl = `/images/${imageId}-${imageFile.name}`; // 存储相对路径
+    imageUrl = `/${imageKey}`; // 存储相对路径
   }
 
   const newTodo = {
@@ -640,9 +641,10 @@ async function handleAddItem(request, url, env) {
     // Compress image before storing
     const compressedImage = await compressImage(imageFile);
     const imageId = crypto.randomUUID();
-    const imageKey = `images/${imageId}-${imageFile.name}`;
+    const extension = imageFile.name.split('.').pop();
+    const imageKey = `images/${imageId}.${extension}`;
     await env.R2_BUCKET.put(imageKey, compressedImage, { httpMetadata: { contentType: imageFile.type } });
-    imageUrl = `/images/${imageId}-${imageFile.name}`; // 存储相对路径
+    imageUrl = `/${imageKey}`; // 存储相对路径
   }
 
   const newItem = {
