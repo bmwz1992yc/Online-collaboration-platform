@@ -732,6 +732,13 @@ function renderMasterViewHtml(url, allTodos, deletedTodos, keptItems, shareLinks
     </label>`
   ).join('');
 
+  const itemUserOptions = Object.values(shareLinks).map(link => 
+    `<label class="flex items-center space-x-2">
+        <input type="checkbox" name="itemUserIds" value="${link.username}" class="rounded border-gray-300 text-purple-600 focus:ring-purple-300">
+        <span>${getDisplayName(link.username)}</span>
+    </label>`
+  ).join('');
+
   let userManagementHtml = '';
   if (isRootView) {
     const linkItems = Object.entries(shareLinks).map(([token, data]) => `
@@ -1022,7 +1029,7 @@ function renderMasterViewHtml(url, allTodos, deletedTodos, keptItems, shareLinks
                            class="rounded border-gray-300 text-purple-600 focus:ring-purple-300" />
                     <span>Public (无指定用户)</span>
                   </label>
-                  ${userOptions}
+                  ${itemUserOptions}
                 </div>
               </div>
               <input type="file" id="item-image" name="image" accept="image/*"
