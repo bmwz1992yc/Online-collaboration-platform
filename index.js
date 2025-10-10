@@ -301,7 +301,7 @@ async function deleteUser(token) {
 
 // --- 主请求处理器 ---
 
-async function fetch(request, env) {
+async function handleRequest(request, env, ctx) {
   try {
     const url = new URL(request.url);
     const verificationFilePath = '/6ee0f9bfa3e3dd568497b8062fba8521.txt';
@@ -1052,4 +1052,7 @@ function renderMasterViewHtml(url, allTodos, deletedTodos, keptItems, shareLinks
   `;
 }
 
-export default { fetch };
+addEventListener('fetch', event => {
+  event.respondWith(handleRequest(event.request, event.env, event.ctx))
+})
+
