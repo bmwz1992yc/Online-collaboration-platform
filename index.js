@@ -1102,10 +1102,8 @@ function renderMasterViewHtml(url, allTodos, deletedTodos, keptItems, shareLinks
         allUsers.forEach(user => {
             const label = document.createElement('label');
             label.className = 'flex items-center space-x-2';
-            label.innerHTML = `
-                <input type="checkbox" name="newKeepers" value="${user}" class="rounded border-gray-300 text-blue-600 focus:ring-blue-300">
-                <span>${user === 'admin' ? 'yc' : user}</span>
-            `;
+            label.innerHTML = '<input type="checkbox" name="newKeepers" value="' + user + '" class="rounded border-gray-300 text-blue-600 focus:ring-blue-300">' +
+                '<span>' + (user === 'admin' ? 'yc' : user) + '</span>';
             container.appendChild(label);
         });
 
