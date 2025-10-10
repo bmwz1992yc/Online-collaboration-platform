@@ -48,6 +48,7 @@ async function loadTodos(env, key) {
     return await r2Object.json();
   } catch (error) {
     console.error(`Error loading or parsing todos for key ${key}:`, error);
+    if (env.DEBUG) throw error; // Re-throw for debugging
     return [];
   }
 }
@@ -63,6 +64,7 @@ async function loadShareLinks(env) {
     return await r2Object.json();
   } catch (error) {
     console.error("Error loading share links:", error);
+    if (env.DEBUG) throw error; // Re-throw for debugging
     return {};
   }
 }
@@ -78,6 +80,7 @@ async function loadDeletedTodos(env) {
     return await r2Object.json();
   } catch (error) {
     console.error("Error loading deleted todos:", error);
+    if (env.DEBUG) throw error; // Re-throw for debugging
     return [];
   }
 }
@@ -93,6 +96,7 @@ async function loadKeptItems(env) {
     return await r2Object.json();
   } catch (error) {
     console.error("Error loading kept items:", error);
+    if (env.DEBUG) throw error; // Re-throw for debugging
     return [];
   }
 }
@@ -303,6 +307,11 @@ async function deleteUser(token) {
 
 async function handleRequest(request, env, ctx) {
   try {
+    // Check for R2_BUCKET binding
+    if (!env.R2_BUCKET) {
+      console.error('R2_BUCKET binding is missing. Please ensure your wrangler.toml or Cloudflare Worker settings include an R2 bucket binding named R2_BUCKET.');
+      return new Response('Internal Server Error: R2_BUCKET binding is missing.', { status: 500 });
+    }
     const url = new URL(request.url);
     const verificationFilePath = '/6ee0f9bfa3e3dd568497b8062fba8521.txt';
     const verificationContent = '12c799e1e1c52e9b3d20f6420f5e46a0589222ba';
@@ -403,7 +412,7 @@ async function handleRequest(request, env, ctx) {
 
   return new Response('Method Not Allowed', { status: 405 });
   } catch (error) {
-    console.error('Error in fetch:', error);
+    console.error('Error in handleRequest:', error.stack || error);
     return new Response('Internal Server Error', { status: 500 });
   }
 }
