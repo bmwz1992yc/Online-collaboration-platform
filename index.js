@@ -307,6 +307,24 @@ async function deleteUser(token) {
 
 async function handleRequest(request, env, ctx) {
   try {
+    // Check for R2_BUCKET binding with more detailed logging
+    console.log('Environment object:', JSON.stringify(Object.keys(env || {})));
+    console.log('R2_BUCKET binding exists:', !!env?.R2_BUCKET);
+    if (env && env.R2_BUCKET) {
+      console.log('R2_BUCKET type:', typeof env.R2_BUCKET);
+    }
+    
+    // Fallback: try to get R2 bucket from context if not in env
+    if (!env || !env.R2_BUCKET) {
+      console.log('Trying to get R2 bucket from context bindings');
+      const bindings = ctx?.bindings || {};
+      console.log('Context bindings:', JSON.stringify(Object.keys(bindings || {})));
+      if (bindings.R2_BUCKET) {
+        env = { ...env, R2_BUCKET: bindings.R2_BUCKET };
+        console.log('Successfully got R2_BUCKET from context bindings');
+      }
+    }
+    
     // Check for R2_BUCKET binding
     if (!env || !env.R2_BUCKET) {
       console.error('R2_BUCKET binding is missing or env object is undefined. Please ensure your wrangler.toml or Cloudflare Worker settings include an R2 bucket binding named R2_BUCKET.');
@@ -1062,7 +1080,8 @@ function renderMasterViewHtml(url, allTodos, deletedTodos, keptItems, shareLinks
   `;
 }
 
-addEventListener('fetch', event => {
-  event.respondWith(handleRequest(event.request, event.env, event.ctx))
-})
-
+export default {
+  async fetch(request, env, ctx) {
+    return handleRequest(request, env, ctx);
+  }
+}
