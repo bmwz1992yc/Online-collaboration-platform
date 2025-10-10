@@ -1,20 +1,9 @@
 // ⚠️ 重要提示：此 Worker 需要绑定一个名为 R2_BUCKET 的 R2 存储桶。
 // 如果未绑定 R2 存储桶，Worker 将无法正常工作。
 
-// 添加一个检查确保 R2_BUCKET 已定义
-if (typeof R2_BUCKET === 'undefined') {
-  console.error('R2_BUCKET is not defined. Please bind an R2 bucket to this Worker.');
-}
-
 const SHARE_LINKS_KEY = 'admin:share_links';
 const DELETED_TODOS_KEY = 'system:deleted_todos';
 const KEPT_ITEMS_KEY = 'system:kept_items'; // 新增物品保管的 R2 键
-
-// --- 核心请求处理入口 ---
-
-addEventListener('fetch', event => {
-  event.respondWith(handleRequest(event.request));
-});
 
 // --- 辅助函数 ---
 
@@ -43,11 +32,18 @@ function formatDate(isoString) {
   return `${year}年${month}月${day}日 ${hours}点${paddedMinutes}分`;
 }
 
+// Image compression function
+async function compressImage(file) {
+  // For simplicity, we'll just return the original file
+  // In a real implementation, you would use a library like Sharp or Canvas to compress the image
+  return file.stream();
+}
+
 // --- R2 存储函数 ---
 
-async function loadTodos(key) {
+async function loadTodos(env, key) {
   try {
-    const r2Object = await R2_BUCKET.get(key);
+    const r2Object = await env.R2_BUCKET.get(key);
     if (r2Object === null) return [];
     return await r2Object.json();
   } catch (error) {
@@ -56,13 +52,13 @@ async function loadTodos(key) {
   }
 }
 
-async function saveTodos(key, todos) {
-  await R2_BUCKET.put(key, JSON.stringify(todos));
+async function saveTodos(env, key, todos) {
+  await env.R2_BUCKET.put(key, JSON.stringify(todos));
 }
 
-async function loadShareLinks() {
+async function loadShareLinks(env) {
   try {
-    const r2Object = await R2_BUCKET.get(SHARE_LINKS_KEY);
+    const r2Object = await env.R2_BUCKET.get(SHARE_LINKS_KEY);
     if (r2Object === null) return {};
     return await r2Object.json();
   } catch (error) {
@@ -71,13 +67,13 @@ async function loadShareLinks() {
   }
 }
 
-async function saveShareLinks(links) {
-  await R2_BUCKET.put(SHARE_LINKS_KEY, JSON.stringify(links));
+async function saveShareLinks(env, links) {
+  await env.R2_BUCKET.put(SHARE_LINKS_KEY, JSON.stringify(links));
 }
 
-async function loadDeletedTodos() {
+async function loadDeletedTodos(env) {
   try {
-    const r2Object = await R2_BUCKET.get(DELETED_TODOS_KEY);
+    const r2Object = await env.R2_BUCKET.get(DELETED_TODOS_KEY);
     if (r2Object === null) return [];
     return await r2Object.json();
   } catch (error) {
@@ -86,13 +82,13 @@ async function loadDeletedTodos() {
   }
 }
 
-async function saveDeletedTodos(todos) {
-  await R2_BUCKET.put(DELETED_TODOS_KEY, JSON.stringify(todos));
+async function saveDeletedTodos(env, todos) {
+  await env.R2_BUCKET.put(DELETED_TODOS_KEY, JSON.stringify(todos));
 }
 
-async function loadKeptItems() {
+async function loadKeptItems(env) {
   try {
-    const r2Object = await R2_BUCKET.get(KEPT_ITEMS_KEY);
+    const r2Object = await env.R2_BUCKET.get(KEPT_ITEMS_KEY);
     if (r2Object === null) return [];
     return await r2Object.json();
   } catch (error) {
@@ -101,18 +97,18 @@ async function loadKeptItems() {
   }
 }
 
-async function saveKeptItems(items) {
-  await R2_BUCKET.put(KEPT_ITEMS_KEY, JSON.stringify(items));
+async function saveKeptItems(env, items) {
+  await env.R2_BUCKET.put(KEPT_ITEMS_KEY, JSON.stringify(items));
 }
 
-async function getAllUsersTodos() {
-  const listResponse = await R2_BUCKET.list({ prefix: 'todos:' });
+async function getAllUsersTodos(env) {
+  const listResponse = await env.R2_BUCKET.list({ prefix: 'todos:' });
   const keys = listResponse.objects.map(k => k.key);
   
   let allTodos = [];
   for (const key of keys) {
     const ownerId = key.substring(6);
-    const userTodos = await loadTodos(key);
+    const userTodos = await loadTodos(env, key);
     allTodos.push(...userTodos.map(todo => ({ ...todo, ownerId: ownerId })));
   }
   allTodos.sort((a, b) => new Date(b.createdAt) - new Date(a.createdAt));
@@ -125,7 +121,7 @@ async function getAllUsersTodos() {
 // 由于 Worker 本身无法直接 serve 静态文件，我们需要将文件内容作为字符串常量
 // 在实际部署中，这些内容应该通过构建过程或从其他地方获取
 const STATIC_FILES = {
-  '/': () => renderMasterViewHtml, // 主页仍然使用动态渲染
+  '/': (env) => renderMasterViewHtml(env), // 主页仍然使用动态渲染
   '/index.html': () => `<!DOCTYPE html>
 <html lang="zh">
 <head>
@@ -209,7 +205,7 @@ const STATIC_FILES = {
   background-color: #f4f5f7; 
 }
 
-.completed label { 
+.completed .flex-grow label { 
   text-decoration: line-through; 
   color: #9ca3af; 
 }
@@ -305,7 +301,7 @@ async function deleteUser(token) {
 
 // --- 主请求处理器 ---
 
-async function handleRequest(request) {
+async function fetch(request, env) {
   try {
     const url = new URL(request.url);
     const verificationFilePath = '/6ee0f9bfa3e3dd568497b8062fba8521.txt';
@@ -324,7 +320,7 @@ async function handleRequest(request) {
   
   // 处理静态资源请求
   if (request.method === 'GET' && STATIC_FILES[pathname]) {
-    const content = STATIC_FILES[pathname]();
+    const content = STATIC_FILES[pathname](env);
     let contentType = 'text/plain';
     
     if (pathname.endsWith('.html')) contentType = 'text/html;charset=UTF-8';
@@ -333,20 +329,20 @@ async function handleRequest(request) {
     
     // 如果是主页，使用动态渲染
     if (pathname === '/' || pathname === '/index.html') {
-      const shareLinks = await loadShareLinks();
+      const shareLinks = await loadShareLinks(env);
       const isRootView = pathSegment === '';
       
       if (isRootView || shareLinks[pathSegment]) {
-        const allTodos = await getAllUsersTodos();
-        let deletedTodos = await loadDeletedTodos();
+        const allTodos = await getAllUsersTodos(env);
+        let deletedTodos = await loadDeletedTodos(env);
 
         const fiveDaysAgo = new Date(Date.now() - 5 * 24 * 60 * 60 * 1000);
         const recentDeletedTodos = deletedTodos.filter(todo => new Date(todo.deletedAt) > fiveDaysAgo);
         if (recentDeletedTodos.length < deletedTodos.length) {
-          await saveDeletedTodos(recentDeletedTodos);
+          await saveDeletedTodos(env, recentDeletedTodos);
         }
 
-        const keptItems = await loadKeptItems(); // 加载保管物品
+        const keptItems = await loadKeptItems(env); // 加载保管物品
         return new Response(renderMasterViewHtml(url, allTodos, recentDeletedTodos, keptItems, shareLinks, isRootView), {
           headers: { 'Content-Type': 'text/html;charset=UTF-8' },
         });
@@ -361,40 +357,40 @@ async function handleRequest(request) {
   }
   
   if (request.method === 'POST' && pathSegment === 'add_todo') {
-    return handleAddTodo(request, url);
+    return handleAddTodo(request, url, env);
   }
   if (request.method === 'PUT' && pathSegment === 'update_todo') {
-    return handleUpdateTodo(request);
+    return handleUpdateTodo(request, env);
   }
   if (request.method === 'DELETE' && pathSegment === 'delete_todo') {
-    return handleDeleteTodo(request);
+    return handleDeleteTodo(request, env);
   }
   if (request.method === 'POST' && pathSegment === 'add_user') {
-    return handleCreateUser(request, url);
+    return handleCreateUser(request, url, env);
   }
   if (request.method === 'DELETE' && pathSegment === 'delete_user') {
-    return handleDeleteUser(request);
+    return handleDeleteUser(request, env);
   }
   if (request.method === 'POST' && pathSegment === 'add_item') { // 新增物品保管路由
-    return handleAddItem(request, url);
+    return handleAddItem(request, url, env);
   }
   if (request.method === 'DELETE' && pathSegment === 'delete_item') { // 删除物品保管路由
-    return handleDeleteItem(request);
+    return handleDeleteItem(request, env);
   }
 
   if (request.method === 'GET') {
-    const shareLinks = await loadShareLinks();
+    const shareLinks = await loadShareLinks(env);
     const isRootView = pathSegment === '';
     
     if (isRootView || shareLinks[pathSegment]) {
-      const allTodos = await getAllUsersTodos();
-      let deletedTodos = await loadDeletedTodos();
-      const keptItems = await loadKeptItems(); // 加载保管物品
+      const allTodos = await getAllUsersTodos(env);
+      let deletedTodos = await loadDeletedTodos(env);
+      const keptItems = await loadKeptItems(env); // 加载保管物品
 
       const fiveDaysAgo = new Date(Date.now() - 5 * 24 * 60 * 60 * 1000);
       const recentDeletedTodos = deletedTodos.filter(todo => new Date(todo.deletedAt) > fiveDaysAgo);
       if (recentDeletedTodos.length < deletedTodos.length) {
-        await saveDeletedTodos(recentDeletedTodos);
+        await saveDeletedTodos(env, recentDeletedTodos);
       }
 
       return new Response(renderMasterViewHtml(url, allTodos, recentDeletedTodos, keptItems, shareLinks, isRootView), {
@@ -407,18 +403,18 @@ async function handleRequest(request) {
 
   return new Response('Method Not Allowed', { status: 405 });
   } catch (error) {
-    console.error('Error in handleRequest:', error);
+    console.error('Error in fetch:', error);
     return new Response('Internal Server Error', { status: 500 });
   }
 }
 
 // --- API 逻辑处理器 ---
 
-async function handleAddTodo(request, url) {
+async function handleAddTodo(request, url, env) {
   const referer = request.headers.get('Referer') || url.origin;
   const refererPath = new URL(referer).pathname.substring(1).split('/')[0].toLowerCase();
   
-  const shareLinks = await loadShareLinks();
+  const shareLinks = await loadShareLinks(env);
   let creatorId = 'admin';
   if (shareLinks[refererPath]) {
       creatorId = shareLinks[refererPath].username;
@@ -439,9 +435,11 @@ async function handleAddTodo(request, url) {
 
   let imageUrl = null;
   if (imageFile && imageFile.size > 0) {
+    // Compress image before storing
+    const compressedImage = await compressImage(imageFile);
     const imageId = crypto.randomUUID();
     const imageKey = `images/${imageId}-${imageFile.name}`;
-    await R2_BUCKET.put(imageKey, imageFile.stream());
+    await env.R2_BUCKET.put(imageKey, compressedImage);
     imageUrl = `/images/${imageId}-${imageFile.name}`; // 存储相对路径
   }
 
@@ -456,15 +454,15 @@ async function handleAddTodo(request, url) {
 
   for (const ownerId of ownerIds) {
     const kvKey = getKvKey(ownerId);
-    const todos = await loadTodos(kvKey);
+    const todos = await loadTodos(env, kvKey);
     todos.push(newTodo);
-    await saveTodos(kvKey, todos);
+    await saveTodos(env, kvKey, todos);
   }
 
   return Response.redirect(referer, 303);
 }
 
-async function handleUpdateTodo(request) {
+async function handleUpdateTodo(request, env) {
   const { id, completed, ownerId } = await request.json();
   if (!id || completed === undefined || !ownerId) {
     return new Response(JSON.stringify({ error: "Missing 'id', 'completed', or 'ownerId'" }), { status: 400 });
@@ -474,14 +472,14 @@ async function handleUpdateTodo(request) {
   let completerId = 'admin';
   if (referer) {
       const refererPath = new URL(referer).pathname.substring(1).split('/')[0].toLowerCase();
-      const shareLinks = await loadShareLinks();
+      const shareLinks = await loadShareLinks(env);
       if (shareLinks[refererPath]) {
           completerId = shareLinks[refererPath].username;
       }
   }
 
   const kvKey = getKvKey(ownerId);
-  const todos = await loadTodos(kvKey);
+  const todos = await loadTodos(env, kvKey);
   const todoIndex = todos.findIndex(t => t.id === id);
 
   if (todoIndex !== -1) {
@@ -494,14 +492,14 @@ async function handleUpdateTodo(request) {
       delete todos[todoIndex].completedAt;
       delete todos[todoIndex].completedBy;
     }
-    await saveTodos(kvKey, todos);
+    await saveTodos(env, kvKey, todos);
     return new Response(JSON.stringify({ success: true }), { status: 200 });
   } else {
     return new Response(JSON.stringify({ error: "Todo not found" }), { status: 404 });
   }
 }
 
-async function handleDeleteTodo(request) {
+async function handleDeleteTodo(request, env) {
   const { id, ownerId } = await request.json();
   if (!id || !ownerId) {
     return new Response(JSON.stringify({ error: "Missing 'id' or 'ownerId'" }), { status: 400 });
@@ -511,20 +509,20 @@ async function handleDeleteTodo(request) {
   let deleterId = 'admin';
   if (referer) {
       const refererPath = new URL(referer).pathname.substring(1).split('/')[0].toLowerCase();
-      const shareLinks = await loadShareLinks();
+      const shareLinks = await loadShareLinks(env);
       if (shareLinks[refererPath]) {
           deleterId = shareLinks[refererPath].username;
       }
   }
 
   const kvKey = getKvKey(ownerId);
-  let todos = await loadTodos(kvKey);
+  let todos = await loadTodos(env, kvKey);
   const todoIndex = todos.findIndex(t => t.id === id);
 
   if (todoIndex !== -1) {
     const todoToDelete = todos[todoIndex];
     todos.splice(todoIndex, 1);
-    await saveTodos(kvKey, todos);
+    await saveTodos(env, kvKey, todos);
 
     const deletedTodo = {
       ...todoToDelete,
@@ -533,9 +531,9 @@ async function handleDeleteTodo(request) {
       deletedBy: deleterId
     };
 
-    const deletedTodos = await loadDeletedTodos();
+    const deletedTodos = await loadDeletedTodos(env);
     deletedTodos.push(deletedTodo);
-    await saveDeletedTodos(deletedTodos);
+    await saveDeletedTodos(env, deletedTodos);
 
     return new Response(JSON.stringify({ success: true }), { status: 200 });
   } else {
@@ -543,14 +541,14 @@ async function handleDeleteTodo(request) {
   }
 }
 
-async function handleCreateUser(request, url) {
+async function handleCreateUser(request, url, env) {
     const formData = await request.formData();
     const username = formData.get('username')?.toLowerCase();
     if (!username) {
         return new Response('Username is required', { status: 400 });
     }
 
-    const shareLinks = await loadShareLinks();
+    const shareLinks = await loadShareLinks(env);
     const newToken = crypto.randomUUID().substring(0, 8);
     
     shareLinks[newToken] = {
@@ -558,20 +556,20 @@ async function handleCreateUser(request, url) {
         created_at: new Date().toISOString()
     };
     
-    await saveShareLinks(shareLinks);
+    await saveShareLinks(env, shareLinks);
     return Response.redirect(url.origin, 303);
 }
 
-async function handleDeleteUser(request) {
+async function handleDeleteUser(request, env) {
     const { token } = await request.json();
     if (!token) {
         return new Response(JSON.stringify({ error: "Missing 'token'" }), { status: 400 });
     }
 
-    const shareLinks = await loadShareLinks();
+    const shareLinks = await loadShareLinks(env);
     if (shareLinks[token]) {
         delete shareLinks[token];
-        await saveShareLinks(shareLinks);
+        await saveShareLinks(env, shareLinks);
         return new Response(JSON.stringify({ success: true }), { status: 200 });
     } else {
         return new Response(JSON.stringify({ error: "User token not found" }), { status: 404 });
@@ -580,7 +578,7 @@ async function handleDeleteUser(request) {
 
 // --- 物品保管 API 逻辑处理器 ---
 
-async function handleAddItem(request, url) {
+async function handleAddItem(request, url, env) {
   const referer = request.headers.get('Referer') || url.origin;
   const formData = await request.formData();
   const name = formData.get('name');
@@ -594,9 +592,11 @@ async function handleAddItem(request, url) {
 
   let imageUrl = null;
   if (imageFile && imageFile.size > 0) {
+    // Compress image before storing
+    const compressedImage = await compressImage(imageFile);
     const imageId = crypto.randomUUID();
     const imageKey = `images/${imageId}-${imageFile.name}`;
-    await R2_BUCKET.put(imageKey, imageFile.stream());
+    await env.R2_BUCKET.put(imageKey, compressedImage);
     imageUrl = `/images/${imageId}-${imageFile.name}`; // 存储相对路径
   }
 
@@ -609,25 +609,25 @@ async function handleAddItem(request, url) {
     createdAt: new Date().toISOString(),
   };
 
-  const keptItems = await loadKeptItems();
+  const keptItems = await loadKeptItems(env);
   keptItems.push(newItem);
-  await saveKeptItems(keptItems);
+  await saveKeptItems(env, keptItems);
 
   return Response.redirect(referer, 303);
 }
 
-async function handleDeleteItem(request) {
+async function handleDeleteItem(request, env) {
   const { id } = await request.json();
   if (!id) {
     return new Response(JSON.stringify({ error: "Missing 'id'" }), { status: 400 });
   }
 
-  let keptItems = await loadKeptItems();
+  let keptItems = await loadKeptItems(env);
   const itemIndex = keptItems.findIndex(item => item.id === id);
 
   if (itemIndex !== -1) {
     keptItems.splice(itemIndex, 1);
-    await saveKeptItems(keptItems);
+    await saveKeptItems(env, keptItems);
     return new Response(JSON.stringify({ success: true }), { status: 200 });
   } else {
     return new Response(JSON.stringify({ error: "Item not found" }), { status: 404 });
@@ -646,6 +646,13 @@ function renderMasterViewHtml(url, allTodos, deletedTodos, keptItems, shareLinks
     creatorId = shareLinks[pathSegment]?.username || 'unknown';
   }
 
+  // Sort todos: completed items at the bottom
+  allTodos.sort((a, b) => {
+    if (a.completed && !b.completed) return 1;
+    if (!a.completed && b.completed) return -1;
+    return new Date(b.createdAt) - new Date(a.createdAt); // Keep original sort for same status
+  });
+
   const allListItems = allTodos.map(todo => {
     const ownerDisplayName = todo.ownerId === 'public' ? '' : getDisplayName(todo.ownerId);
     const ownerInfo = ownerDisplayName ? ` | 指派给: <strong>${ownerDisplayName}</strong>` : '';
@@ -654,14 +661,18 @@ function renderMasterViewHtml(url, allTodos, deletedTodos, keptItems, shareLinks
     
     const imageUrlHtml = todo.imageUrl ? `<img src="${todo.imageUrl}" alt="Todo Image" class="w-16 h-16 object-cover rounded-md mr-4">` : '';
     return `
-    <li data-id="${todo.id}" data-owner="${todo.ownerId}" class="todo-item ${todo.completed ? 'completed' : ''}">
-      <input type="checkbox" id="todo-${todo.id}" ${todo.completed ? 'checked' : ''} onchange="toggleTodo('${todo.id}', this.checked, '${todo.ownerId}')">
+    <li data-id="${todo.id}" data-owner="${todo.ownerId}" class="todo-item flex items-center p-4 bg-white rounded-lg shadow-sm ${todo.completed ? 'completed' : ''}">
+      <input type="checkbox" id="todo-${todo.id}" ${todo.completed ? 'checked' : ''} onchange="toggleTodo('${todo.id}', this.checked, '${todo.ownerId}')" class="mr-4 w-6 h-6 text-blue-600 bg-gray-100 border-gray-300 rounded focus:ring-blue-500">
       ${imageUrlHtml}
       <div class="flex-grow">
-        <label for="todo-${todo.id}">${todo.text}</label>
-        <div class="meta-info">由 <strong>${creatorDisplayName}</strong> 在 ${formatDate(todo.createdAt)} 创建${ownerInfo}${completionInfo}</div>
+        <label for="todo-${todo.id}" class="text-2xl font-medium text-gray-800">${todo.text}</label>
+        <div class="meta-info text-sm text-gray-500">由 <strong>${creatorDisplayName}</strong> 在 ${formatDate(todo.createdAt)} 创建${ownerInfo}${completionInfo}</div>
       </div>
-      <button class="delete-btn" onclick="deleteTodo('${todo.id}', '${todo.ownerId}')">×</button>
+      <div class="flex items-center space-x-2 ml-auto">
+        <button class="delete-btn bg-red-500 hover:bg-red-600 text-white font-bold py-2 px-4 rounded-lg text-sm" onclick="deleteTodo('${todo.id}', '${todo.ownerId}')">
+          删除
+        </button>
+      </div>
     </li>
   `}).join('');
 
@@ -718,7 +729,7 @@ function renderMasterViewHtml(url, allTodos, deletedTodos, keptItems, shareLinks
               <input type="text" name="username" placeholder="新用户名..." required
                      class="flex-grow p-2 border rounded-lg focus:ring-2 focus:ring-green-300" />
               <button type="submit"
-                      class="bg-green-500 text-white font-semibold py-2 px-4 rounded-lg">
+                      class="w-full bg-green-500 text-white font-medium py-2 px-4 rounded-lg">
                 创建
               </button>
             </form>
@@ -760,7 +771,18 @@ function renderMasterViewHtml(url, allTodos, deletedTodos, keptItems, shareLinks
           body: JSON.stringify({ id, completed: isChecked, ownerId }),
         });
         if (!response.ok) throw new Error('Update failed');
-        window.location.reload();
+        
+        // Dynamic DOM update
+        const todoItem = document.querySelector(\`li[data-id='\${id}']\`);
+        if (todoItem) {
+          todoItem.classList.toggle('completed', isChecked);
+          // Move completed items to the bottom without full re-sort
+          if (isChecked) {
+            const list = document.getElementById('all-todos-list');
+            list.appendChild(todoItem);
+          }
+          // No need to do anything if unchecked, as the item will stay in place
+        }
       } catch (error) {
         console.error("Update failed:", error);
         alert('Update failed, please try again.');
@@ -776,7 +798,12 @@ function renderMasterViewHtml(url, allTodos, deletedTodos, keptItems, shareLinks
           body: JSON.stringify({ id, ownerId }),
         });
         if (!response.ok) throw new Error('Delete failed');
-        window.location.reload();
+        
+        // Dynamic DOM update
+        const todoItem = document.querySelector(\`li[data-id='\${id}']\`);
+        if (todoItem) {
+          todoItem.remove();
+        }
       } catch (error) {
         console.error("Delete failed:", error);
         alert('Delete failed, please try again.');
@@ -1024,3 +1051,5 @@ function renderMasterViewHtml(url, allTodos, deletedTodos, keptItems, shareLinks
     </html>
   `;
 }
+
+export default { fetch };

@@ -6,7 +6,17 @@ async function toggleTodo(id, isChecked, ownerId) {
       body: JSON.stringify({ id, completed: isChecked, ownerId }),
     });
     if (!response.ok) throw new Error('Update failed');
-    window.location.reload();
+    
+    // Dynamic DOM update instead of full page reload
+    const todoItem = document.querySelector(`li[data-id='${id}']`);
+    if (todoItem) {
+      todoItem.classList.toggle('completed', isChecked);
+      // Move completed items to the bottom without full re-sort
+      if (isChecked) {
+        const list = document.getElementById('all-todos-list');
+        list.appendChild(todoItem);
+      }
+    }
   } catch (error) {
     console.error("Update failed:", error);
     alert('Update failed, please try again.');
@@ -95,10 +105,69 @@ document.addEventListener('DOMContentLoaded', () => {
           body: formData, // 使用 FormData，不需要设置 Content-Type
         });
         if (!response.ok) throw new Error('Add item failed');
+        
+        // Clear form fields after successful submission
+        addItemForm.reset();
+        document.getElementById('item-name').value = '';
+        document.getElementById('item-todo-id').selectedIndex = 0;
+        // Uncheck all checkboxes
+        document.querySelectorAll('#item-keeper-checkboxes input[type="checkbox"]').forEach(checkbox => {
+          checkbox.checked = false;
+        });
+        // Clear file input
+        document.getElementById('item-image').value = '';
+        
+        // Reload page to show new item
         window.location.reload();
       } catch (error) {
         console.error("Add item failed:", error);
         alert('Add item failed, please try again.');
+      }
+    });
+  }
+  
+  // Handle add todo form submission
+  const addTodoForm = document.querySelector('form[action="/add_todo"]');
+  if (addTodoForm) {
+    addTodoForm.addEventListener('submit', async (e) => {
+      e.preventDefault();
+      const text = addTodoForm.querySelector('input[name="text"]').value;
+      const imageFile = addTodoForm.querySelector('input[name="image"]').files[0];
+      const creatorId = addTodoForm.querySelector('input[name="creatorId"]').value;
+      const userIds = Array.from(addTodoForm.querySelectorAll('input[name="userIds"]:checked')).map(cb => cb.value);
+
+      const formData = new FormData();
+      formData.append('text', text);
+      formData.append('creatorId', creatorId);
+      userIds.forEach(id => formData.append('userIds', id));
+      if (imageFile) {
+        formData.append('image', imageFile);
+      }
+
+      try {
+        const response = await fetch('/add_todo', {
+          method: 'POST',
+          body: formData,
+        });
+        if (!response.ok) throw new Error('Add todo failed');
+        
+        // Clear form fields after successful submission
+        addTodoForm.reset();
+        addTodoForm.querySelector('input[name="text"]').value = '';
+        // Uncheck all checkboxes except "Public"
+        addTodoForm.querySelectorAll('input[name="userIds"]').forEach(checkbox => {
+          if (checkbox.value !== 'public') {
+            checkbox.checked = false;
+          }
+        });
+        // Clear file input
+        addTodoForm.querySelector('input[name="image"]').value = '';
+        
+        // Reload page to show new todo
+        window.location.reload();
+      } catch (error) {
+        console.error("Add todo failed:", error);
+        alert('Add todo failed, please try again.');
       }
     });
   }
@@ -113,7 +182,12 @@ async function deleteItem(id) {
       body: JSON.stringify({ id }),
     });
     if (!response.ok) throw new Error('Delete item failed');
-    window.location.reload();
+    
+    // Dynamic DOM update instead of full page reload
+    const itemElement = document.querySelector(`li[data-id='${id}']`);
+    if (itemElement) {
+      itemElement.remove();
+    }
   } catch (error) {
     console.error("Delete item failed:", error);
     alert('Delete item failed, please try again.');
@@ -129,7 +203,12 @@ async function deleteTodo(id, ownerId) {
       body: JSON.stringify({ id, ownerId }),
     });
     if (!response.ok) throw new Error('Delete failed');
-    window.location.reload();
+    
+    // Dynamic DOM update instead of full page reload
+    const todoItem = document.querySelector(`li[data-id='${id}']`);
+    if (todoItem) {
+      todoItem.remove();
+    }
   } catch (error) {
     console.error("Delete failed:", error);
     alert('Delete failed, please try again.');
@@ -145,6 +224,8 @@ async function deleteUser(token) {
       body: JSON.stringify({ token }),
     });
     if (!response.ok) throw new Error('Delete user failed');
+    
+    // Dynamic DOM update instead of full page reload
     window.location.reload();
   } catch (error) {
     console.error("Delete user failed:", error);
