@@ -1,5 +1,5 @@
 {
-  "name": "cloudflare-workers-todo-app",
+  "name": "online-collaboration-platform",
   "compatibility_date": "2025-10-02",
   "main": "index.js",
   "r2_buckets": [
