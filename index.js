@@ -312,105 +312,10 @@ async function handleRequest(request, env, ctx) {
       console.error('R2_BUCKET binding is missing or env object is undefined. Please ensure your wrangler.toml or Cloudflare Worker settings include an R2 bucket binding named R2_BUCKET.');
       return new Response('Internal Server Error: R2_BUCKET binding is missing or env object is undefined.', { status: 500 });
     }
-    const url = new URL(request.url);
-    const verificationFilePath = '/6ee0f9bfa3e3dd568497b8062fba8521.txt';
-    const verificationContent = '12c799e1e1c52e9b3d20f6420f5e46a0589222ba';
-    // 1. 优先级最高：处理域名验证文件
-    // 必须检查完整的 url.pathname，而不是 pathSegment
-    if (url.pathname === verificationFilePath) {
-        return new Response(verificationContent, {
-            headers: { 'Content-Type': 'text/plain;charset=UTF-8' },
-            status: 200
-        });
-    }
 
-  const pathname = url.pathname;
-  const pathSegment = pathname.substring(1).split('/')[0].toLowerCase();
-  
-  // 处理静态资源请求
-  if (request.method === 'GET' && STATIC_FILES[pathname]) {
-    const content = STATIC_FILES[pathname](env);
-    let contentType = 'text/plain';
-    
-    if (pathname.endsWith('.html')) contentType = 'text/html;charset=UTF-8';
-    if (pathname.endsWith('.css')) contentType = 'text/css';
-    if (pathname.endsWith('.js')) contentType = 'application/javascript';
-    
-    // 如果是主页，使用动态渲染
-    if (pathname === '/' || pathname === '/index.html') {
-      const shareLinks = await loadShareLinks(env);
-      const isRootView = pathSegment === '';
-      
-      if (isRootView || shareLinks[pathSegment]) {
-        const allTodos = await getAllUsersTodos(env);
-        let deletedTodos = await loadDeletedTodos(env);
+    // Simplified response for testing R2 binding
+    return new Response("Hello World from Cloudflare Worker! R2 binding check passed.", { status: 200 });
 
-        const fiveDaysAgo = new Date(Date.now() - 5 * 24 * 60 * 60 * 1000);
-        const recentDeletedTodos = deletedTodos.filter(todo => new Date(todo.deletedAt) > fiveDaysAgo);
-        if (recentDeletedTodos.length < deletedTodos.length) {
-          await saveDeletedTodos(env, recentDeletedTodos);
-        }
-
-        const keptItems = await loadKeptItems(env); // 加载保管物品
-        return new Response(renderMasterViewHtml(url, allTodos, recentDeletedTodos, keptItems, shareLinks, isRootView), {
-          headers: { 'Content-Type': 'text/html;charset=UTF-8' },
-        });
-      } else {
-        return new Response('404 Not Found: User or page does not exist.', { status: 404 });
-      }
-    }
-    
-    return new Response(content, {
-      headers: { 'Content-Type': contentType },
-    });
-  }
-  
-  if (request.method === 'POST' && pathSegment === 'add_todo') {
-    return handleAddTodo(request, url, env);
-  }
-  if (request.method === 'PUT' && pathSegment === 'update_todo') {
-    return handleUpdateTodo(request, env);
-  }
-  if (request.method === 'DELETE' && pathSegment === 'delete_todo') {
-    return handleDeleteTodo(request, env);
-  }
-  if (request.method === 'POST' && pathSegment === 'add_user') {
-    return handleCreateUser(request, url, env);
-  }
-  if (request.method === 'DELETE' && pathSegment === 'delete_user') {
-    return handleDeleteUser(request, env);
-  }
-  if (request.method === 'POST' && pathSegment === 'add_item') { // 新增物品保管路由
-    return handleAddItem(request, url, env);
-  }
-  if (request.method === 'DELETE' && pathSegment === 'delete_item') { // 删除物品保管路由
-    return handleDeleteItem(request, env);
-  }
-
-  if (request.method === 'GET') {
-    const shareLinks = await loadShareLinks(env);
-    const isRootView = pathSegment === '';
-    
-    if (isRootView || shareLinks[pathSegment]) {
-      const allTodos = await getAllUsersTodos(env);
-      let deletedTodos = await loadDeletedTodos(env);
-      const keptItems = await loadKeptItems(env); // 加载保管物品
-
-      const fiveDaysAgo = new Date(Date.now() - 5 * 24 * 60 * 60 * 1000);
-      const recentDeletedTodos = deletedTodos.filter(todo => new Date(todo.deletedAt) > fiveDaysAgo);
-      if (recentDeletedTodos.length < deletedTodos.length) {
-        await saveDeletedTodos(env, recentDeletedTodos);
-      }
-
-      return new Response(renderMasterViewHtml(url, allTodos, recentDeletedTodos, keptItems, shareLinks, isRootView), {
-        headers: { 'Content-Type': 'text/html;charset=UTF-8' },
-      });
-    } else {
-      return new Response('404 Not Found: User or page does not exist.', { status: 404 });
-    }
-  }
-
-  return new Response('Method Not Allowed', { status: 405 });
   } catch (error) {
     console.error('Error in handleRequest:', error.stack || error);
     return new Response('Internal Server Error', { status: 500 });
