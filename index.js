@@ -121,7 +121,7 @@ async function getAllUsersTodos(env) {
 // 由于 Worker 本身无法直接 serve 静态文件，我们需要将文件内容作为字符串常量
 // 在实际部署中，这些内容应该通过构建过程或从其他地方获取
 const STATIC_FILES = {
-  '/': (env) => renderMasterViewHtml(env), // 主页仍然使用动态渲染
+
   '/index.html': () => `<!DOCTYPE html>
 <html lang="zh">
 <head>
