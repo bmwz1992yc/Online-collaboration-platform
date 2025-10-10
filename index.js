@@ -976,6 +976,7 @@ function renderMasterViewHtml(url, allTodos, deletedTodos, keptItems, shareLinks
 
   const clientScript = `
     lucide.createIcons();
+    refreshFsLightbox();
 
     async function toggleTodo(id, isChecked, ownerId) {
       try {
@@ -1202,10 +1203,13 @@ function renderMasterViewHtml(url, allTodos, deletedTodos, keptItems, shareLinks
           backdrop-filter: blur(6px);
           border: 1px solid rgba(255, 255, 255, 0.4);
           border-radius: 1rem;
-          box-shadow: 0 4px 16px rgba(0, 0, 0, 0.05);
-        }
-      </style>
-    </head>
+                        box-shadow: 0 4px 16px rgba(0, 0, 0, 0.05);
+                      }
+                      .completed .flex-grow label {
+                        text-decoration: line-through;
+                        color: #9ca3af;
+                      }
+                    </style>    </head>
     <body class="p-4 md:p-8 text-gray-800">
       <div class="container mx-auto space-y-10">
         
