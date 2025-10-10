@@ -4,5 +4,10 @@
   "main": "index.js",
   "r2_buckets": [
     { "binding": "R2_BUCKET", "bucket_name": "online-collaboration-platform" }
-  ]
+  ],
+  "observability": {
+    "logs": {
+      "enabled": true
+    }
+  }
 }
