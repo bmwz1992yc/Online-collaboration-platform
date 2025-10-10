@@ -406,6 +406,23 @@ async function handleRequest(request, env, ctx) {
     return handleDeleteItem(request, env);
   }
 
+  if (request.method === 'GET' && pathSegment === 'images') {
+    const imageKey = pathname.substring(1);
+    const r2Object = await env.R2_BUCKET.get(imageKey);
+
+    if (r2Object === null) {
+      return new Response('Not Found', { status: 404 });
+    }
+
+    const headers = new Headers();
+    r2Object.writeHttpMetadata(headers);
+    headers.set('etag', r2Object.httpEtag);
+
+    return new Response(r2Object.body, {
+      headers,
+    });
+  }
+
   if (request.method === 'GET') {
     const shareLinks = await loadShareLinks(env);
     const isRootView = pathSegment === '';
@@ -467,7 +484,7 @@ async function handleAddTodo(request, url, env) {
     const compressedImage = await compressImage(imageFile);
     const imageId = crypto.randomUUID();
     const imageKey = `images/${imageId}-${imageFile.name}`;
-    await env.R2_BUCKET.put(imageKey, compressedImage);
+    await env.R2_BUCKET.put(imageKey, compressedImage, { httpMetadata: { contentType: imageFile.type } });
     imageUrl = `/images/${imageId}-${imageFile.name}`; // 存储相对路径
   }
 
@@ -624,7 +641,7 @@ async function handleAddItem(request, url, env) {
     const compressedImage = await compressImage(imageFile);
     const imageId = crypto.randomUUID();
     const imageKey = `images/${imageId}-${imageFile.name}`;
-    await env.R2_BUCKET.put(imageKey, compressedImage);
+    await env.R2_BUCKET.put(imageKey, compressedImage, { httpMetadata: { contentType: imageFile.type } });
     imageUrl = `/images/${imageId}-${imageFile.name}`; // 存储相对路径
   }
 
