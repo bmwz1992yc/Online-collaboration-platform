@@ -381,15 +381,15 @@ async function handleRequest(request, env, ctx) {
         const allTodos = await getAllUsersTodos(env);
         let deletedTodos = await loadDeletedTodos(env);
 
-        const fiveDaysAgo = new Date(Date.now() - 5 * 24 * 60 * 60 * 1000);
-        const recentDeletedTodos = deletedTodos.filter(todo => new Date(todo.deletedAt) > fiveDaysAgo);
+        const twentyDaysAgo = new Date(Date.now() - 20 * 24 * 60 * 60 * 1000);
+        const recentDeletedTodos = deletedTodos.filter(todo => new Date(todo.deletedAt) > twentyDaysAgo);
         if (recentDeletedTodos.length < deletedTodos.length) {
           await saveDeletedTodos(env, recentDeletedTodos);
         }
 
         const keptItems = await loadKeptItems(env); // 加载保管物品
         let deletedItems = await loadDeletedItems(env);
-        const recentDeletedItems = deletedItems.filter(item => new Date(item.deletedAt) > fiveDaysAgo);
+        const recentDeletedItems = deletedItems.filter(item => new Date(item.deletedAt) > twentyDaysAgo);
         if (recentDeletedItems.length < deletedItems.length) {
           await saveDeletedItems(env, recentDeletedItems);
         }
@@ -428,6 +428,12 @@ async function handleRequest(request, env, ctx) {
   if (request.method === 'DELETE' && pathSegment === 'delete_item') { // 删除物品保管路由
     return handleDeleteItem(request, env);
   }
+  if (request.method === 'POST' && pathSegment === 'restore_todo') {
+    return handleRestoreTodo(request, env);
+  }
+  if (request.method === 'POST' && pathSegment === 'restore_item') {
+    return handleRestoreItem(request, env);
+  }
       if (request.method === 'POST' && pathSegment === 'transfer_item') {
         return handleTransferItem(request, url, env);
       }
@@ -460,14 +466,14 @@ async function handleRequest(request, env, ctx) {
       let deletedTodos = await loadDeletedTodos(env);
       const keptItems = await loadKeptItems(env); // 加载保管物品
 
-      const fiveDaysAgo = new Date(Date.now() - 5 * 24 * 60 * 60 * 1000);
-      const recentDeletedTodos = deletedTodos.filter(todo => new Date(todo.deletedAt) > fiveDaysAgo);
+      const twentyDaysAgo = new Date(Date.now() - 20 * 24 * 60 * 60 * 1000);
+      const recentDeletedTodos = deletedTodos.filter(todo => new Date(todo.deletedAt) > twentyDaysAgo);
       if (recentDeletedTodos.length < deletedTodos.length) {
         await saveDeletedTodos(env, recentDeletedTodos);
       }
 
       let deletedItems = await loadDeletedItems(env);
-      const recentDeletedItems = deletedItems.filter(item => new Date(item.deletedAt) > fiveDaysAgo);
+      const recentDeletedItems = deletedItems.filter(item => new Date(item.deletedAt) > twentyDaysAgo);
       if (recentDeletedItems.length < deletedItems.length) {
         await saveDeletedItems(env, recentDeletedItems);
       }
@@ -530,6 +536,12 @@ async function handleAddTodo(request, url, env) {
     createdAt: new Date().toISOString(),
     creatorId: creatorId,
     imageUrl: imageUrl, // 添加图片 URL
+    activityLog: [{
+      timestamp: new Date().toISOString(),
+      actorId: creatorId,
+      action: 'create',
+      details: { text: text }
+    }]
   };
 
   for (const ownerId of ownerIds) {
@@ -563,15 +575,31 @@ async function handleUpdateTodo(request, env) {
   const todoIndex = todos.findIndex(t => t.id === id);
 
   if (todoIndex !== -1) {
-    const isCompleted = Boolean(completed);
-    todos[todoIndex].completed = isCompleted;
-    if (isCompleted) {
+    const oldStatus = todos[todoIndex].completed;
+    const newStatus = Boolean(completed);
+
+    // Initialize activityLog if it doesn't exist
+    if (!todos[todoIndex].activityLog) {
+      todos[todoIndex].activityLog = [];
+    }
+
+    // Log the status change if there is a change
+    if (oldStatus !== newStatus) {
+      todos[todoIndex].activityLog.push({
+        timestamp: new Date().toISOString(),
+        actorId: completerId,
+        action: 'update_status',
+        details: { from: oldStatus, to: newStatus }
+      });
+    }
+
+    todos[todoIndex].completed = newStatus;
+    if (newStatus) {
       todos[todoIndex].completedAt = new Date().toISOString();
       todos[todoIndex].completedBy = completerId;
-    } else {
-      delete todos[todoIndex].completedAt;
-      delete todos[todoIndex].completedBy;
-    }
+    } 
+    // Per user request, do NOT delete completedAt/By when reopening, to preserve history display.
+
     await saveTodos(env, kvKey, todos);
     return new Response(JSON.stringify({ success: true }), { status: 200 });
   } else {
@@ -600,6 +628,17 @@ async function handleDeleteTodo(request, env) {
   const todoIndex = todos.findIndex(t => t.id === id);
 
   if (todoIndex !== -1) {
+    // Add a delete event to the activity log before moving the todo
+    if (!todos[todoIndex].activityLog) {
+      todos[todoIndex].activityLog = [];
+    }
+    todos[todoIndex].activityLog.push({
+      timestamp: new Date().toISOString(),
+      actorId: deleterId,
+      action: 'delete',
+      details: {}
+    });
+
     const todoToDelete = todos[todoIndex];
     todos.splice(todoIndex, 1);
     await saveTodos(env, kvKey, todos);
@@ -831,6 +870,82 @@ async function handleReturnItem(request, url, env) {
 
   return new Response(JSON.stringify({ success: true }), { status: 200 });
 }
+
+async function handleRestoreTodo(request, env) {
+  const { id } = await request.json();
+  if (!id) {
+    return new Response(JSON.stringify({ error: "Missing 'id'" }), { status: 400 });
+  }
+
+  const referer = request.headers.get('Referer');
+  let restorerId = 'admin';
+  if (referer) {
+      const refererPath = new URL(referer).pathname.substring(1).split('/')[0].toLowerCase();
+      const shareLinks = await loadShareLinks(env);
+      if (shareLinks[refererPath]) {
+          restorerId = shareLinks[refererPath].username;
+      }
+  }
+
+  let deletedTodos = await loadDeletedTodos(env);
+  const todoIndex = deletedTodos.findIndex(t => t.id === id);
+
+  if (todoIndex !== -1) {
+    const todoToRestore = deletedTodos[todoIndex];
+    deletedTodos.splice(todoIndex, 1);
+    
+    if (!todoToRestore.activityLog) {
+      todoToRestore.activityLog = [];
+    }
+    todoToRestore.activityLog.push({
+      timestamp: new Date().toISOString(),
+      actorId: restorerId,
+      action: 'restore',
+      details: {}
+    });
+
+    // Remove deletion-specific properties
+    const { ownerId, deletedAt, deletedBy, ...restoredTodo } = todoToRestore;
+
+    const kvKey = getKvKey(ownerId);
+    let todos = await loadTodos(env, kvKey);
+    todos.push(restoredTodo);
+
+    await saveDeletedTodos(env, deletedTodos);
+    await saveTodos(env, kvKey, todos);
+
+    return new Response(JSON.stringify({ success: true }), { status: 200 });
+  } else {
+    return new Response(JSON.stringify({ error: "Deleted todo not found" }), { status: 404 });
+  }
+}
+
+async function handleRestoreItem(request, env) {
+  const { id } = await request.json();
+  if (!id) {
+    return new Response(JSON.stringify({ error: "Missing 'id'" }), { status: 400 });
+  }
+
+  let deletedItems = await loadDeletedItems(env);
+  const itemIndex = deletedItems.findIndex(item => item.id === id);
+
+  if (itemIndex !== -1) {
+    const itemToRestore = deletedItems[itemIndex];
+    deletedItems.splice(itemIndex, 1);
+
+    const { deletedAt, deletedBy, ...restoredItem } = itemToRestore;
+
+    let keptItems = await loadKeptItems(env);
+    keptItems.push(restoredItem);
+
+    await saveDeletedItems(env, deletedItems);
+    await saveKeptItems(env, keptItems);
+
+    return new Response(JSON.stringify({ success: true }), { status: 200 });
+  } else {
+    return new Response(JSON.stringify({ error: "Deleted item not found" }), { status: 404 });
+  }
+}
 // --- HTML 模板和前端逻辑 ---
 
 function renderMasterViewHtml(url, allTodos, deletedTodos, keptItems, deletedItems, shareLinks, isRootView) {
@@ -853,9 +968,50 @@ function renderMasterViewHtml(url, allTodos, deletedTodos, keptItems, deletedIte
     const ownerDisplayName = todo.ownerId === 'public' ? '' : getDisplayName(todo.ownerId);
     const ownerInfo = ownerDisplayName ? ` | 指派给: <strong>${ownerDisplayName}</strong>` : '';
     const creatorDisplayName = getDisplayName(todo.creatorId || 'unknown');
-    const completionInfo = todo.completed ? ` | 由 <strong>${getDisplayName(todo.completedBy)}</strong> 在 ${formatDate(todo.completedAt)} 完成` : '';
     
+    // Modified completionInfo logic
+    let completionInfo = '';
+    if (todo.completed) {
+      completionInfo = ` | 由 <strong>${getDisplayName(todo.completedBy)}</strong> 在 ${formatDate(todo.completedAt)} 完成`;
+    } else if (todo.completedAt) {
+      // Keep history display as requested
+      completionInfo = ` | (上次由 <strong>${getDisplayName(todo.completedBy)}</strong> 在 ${formatDate(todo.completedAt)} 完成)`;
+    }
+
     const imageUrlHtml = todo.imageUrl ? `<a data-fslightbox href="${todo.imageUrl}"><img src="${todo.imageUrl}" alt="Todo Image" class="w-16 h-16 object-cover rounded-md mr-4"></a>` : '';
+
+    // --- Activity Log Rendering ---
+    const formatActivity = (logEntry) => {
+      const actor = `<strong>${getDisplayName(logEntry.actorId)}</strong>`;
+      const time = formatDate(logEntry.timestamp);
+      switch (logEntry.action) {
+        case 'create':
+          return `<li>${time}: ${actor} 创建了此任务。</li>`;
+        case 'update_status':
+          const from = logEntry.details.from ? "已完成" : "未完成";
+          const to = logEntry.details.to ? "已完成" : "未完成";
+          return `<li>${time}: ${actor} 将状态从 <strong>${from}</strong> 更新为 <strong>${to}</strong>。</li>`;
+        case 'delete':
+           return `<li>${time}: ${actor} 删除了此任务。</li>`;
+        default:
+          return `<li>${time}: 未知操作。</li>`;
+      }
+    };
+
+    let activityLogHtml = '';
+    if (todo.activityLog && todo.activityLog.length > 0) {
+      activityLogHtml = `
+        <div class="mt-4 pt-2 border-t border-gray-200">
+          <details>
+            <summary class="cursor-pointer text-sm font-semibold text-gray-600">操作历史</summary>
+            <ul class="mt-2 pl-5 text-xs text-gray-500 list-disc space-y-1">
+              ${todo.activityLog.slice().reverse().map(formatActivity).join('')}
+            </ul>
+          </details>
+        </div>
+      `;
+    }
+    // --- End Activity Log Rendering ---
 
     const associatedItems = keptItems.filter(item => item.todoId === todo.id);
     const associatedItemsHtml = associatedItems.map(item => {
@@ -933,6 +1089,7 @@ function renderMasterViewHtml(url, allTodos, deletedTodos, keptItems, deletedIte
         </div>
       </div>
       ${associatedItemsHtml ? `<div class="w-full mt-2">${associatedItemsHtml}</div>` : ''}
+      ${activityLogHtml}
     </li>
   `}).join('');
 
@@ -948,11 +1105,14 @@ function renderMasterViewHtml(url, allTodos, deletedTodos, keptItems, deletedIte
       const deletionInfo = ` | 由 <strong>${getDisplayName(todo.deletedBy)}</strong> 在 ${formatDate(todo.deletedAt)} 删除`;
 
       return `
-      <li class="todo-item opacity-60">
-        <div class="flex-grow">
+      <li class="todo-item opacity-60 flex justify-between items-center">
+        <div>
           <label class="${todo.completed ? 'line-through' : ''}">${todo.text}</label>
           <div class="meta-info">由 <strong>${creatorDisplayName}</strong> 在 ${formatDate(todo.createdAt)} 创建${ownerInfo}${completionInfo}${deletionInfo}</div>
         </div>
+        <button class="bg-green-500 hover:bg-green-600 text-white font-semibold py-1 px-3 rounded-lg text-sm" onclick="restoreTodo('${todo.id}')">
+          还原
+        </button>
       </li>
       `;
   }).join('');
@@ -964,12 +1124,15 @@ function renderMasterViewHtml(url, allTodos, deletedTodos, keptItems, deletedIte
     const deletedAt = formatDate(item.deletedAt);
 
     return `
-      <li class="todo-item opacity-60">
-        <div class="flex-grow">
+      <li class="todo-item opacity-60 flex justify-between items-center">
+        <div>
           <label class="line-through">${item.name}</label>
           <div class="meta-info">由 <strong>${creator}</strong> 在 ${createdAt} 创建</div>
           <div class="meta-info">由 <strong>${deleter}</strong> 在 ${deletedAt} 删除</div>
         </div>
+        <button class="bg-green-500 hover:bg-green-600 text-white font-semibold py-1 px-3 rounded-lg text-sm" onclick="restoreItem('${item.id}')">
+          还原
+        </button>
       </li>
     `;
   }).join('');
@@ -1156,6 +1319,38 @@ function renderMasterViewHtml(url, allTodos, deletedTodos, keptItems, deletedIte
       } catch (error) {
         console.error("Delete user failed:", error);
         alert('删除用户失败，请重试。');
+      }
+    }
+
+    async function restoreTodo(id) {
+      if (!confirm('确定要还原此事项吗？')) return;
+      try {
+        const response = await fetch('/restore_todo', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ id }),
+        });
+        if (!response.ok) throw new Error('还原失败');
+        window.location.reload();
+      } catch (error) {
+        console.error("Restore failed:", error);
+        alert('还原失败，请重试。');
+      }
+    }
+
+    async function restoreItem(id) {
+      if (!confirm('确定要还原此物品吗？')) return;
+      try {
+        const response = await fetch('/restore_item', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ id }),
+        });
+        if (!response.ok) throw new Error('还原物品失败');
+        window.location.reload();
+      } catch (error) {
+        console.error("Restore item failed:", error);
+        alert('还原物品失败，请重试。');
       }
     }
 
@@ -1447,7 +1642,7 @@ function renderMasterViewHtml(url, allTodos, deletedTodos, keptItems, deletedIte
           <section class="card p-6">
             <div class="flex items-center gap-2 mb-4">
               <i data-lucide="trash-2" class="w-6 h-6 text-red-500"></i>
-              <h2 class="text-2xl font-semibold text-gray-800">最近删除 (5天内)</h2>
+              <h2 class="text-2xl font-semibold text-gray-800">最近删除 (20天内)</h2>
             </div>
             <ul id="deleted-todos-list" class="space-y-3 text-sm text-gray-500">
               ${deletedListItems || '<p class="text-center py-10">无已删除事项。</p>'} 
