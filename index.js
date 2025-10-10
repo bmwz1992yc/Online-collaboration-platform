@@ -308,9 +308,9 @@ async function deleteUser(token) {
 async function handleRequest(request, env, ctx) {
   try {
     // Check for R2_BUCKET binding
-    if (!env.R2_BUCKET) {
-      console.error('R2_BUCKET binding is missing. Please ensure your wrangler.toml or Cloudflare Worker settings include an R2 bucket binding named R2_BUCKET.');
-      return new Response('Internal Server Error: R2_BUCKET binding is missing.', { status: 500 });
+    if (!env || !env.R2_BUCKET) {
+      console.error('R2_BUCKET binding is missing or env object is undefined. Please ensure your wrangler.toml or Cloudflare Worker settings include an R2 bucket binding named R2_BUCKET.');
+      return new Response('Internal Server Error: R2_BUCKET binding is missing or env object is undefined.', { status: 500 });
     }
     const url = new URL(request.url);
     const verificationFilePath = '/6ee0f9bfa3e3dd568497b8062fba8521.txt';
