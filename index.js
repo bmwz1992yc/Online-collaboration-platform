@@ -1031,7 +1031,7 @@ function renderMasterViewHtml(url, allTodos, deletedTodos, keptItems, shareLinks
                   });
                   if (!response.ok) {
                       const errorText = await response.text();
-                      throw new Error(`Transfer failed: ${errorText}`);
+                      throw new Error('Transfer failed: ' + errorText);
                   }
                   window.location.reload();
               } catch (error) {
