@@ -1,8 +1,8 @@
 {
-  "name": "cloudflare-workers-todo-app",
+  "name": "online-collaboration-platform",
   "compatibility_date": "2025-10-02",
   "main": "index.js",
   "r2_buckets": [
-    { "binding": "R2_BUCKET", "bucket_name": "to-do-list-workersapp" }
+    { "binding": "R2_BUCKET", "bucket_name": "online-collaboration-platform" }
   ]
 }
