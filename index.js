@@ -687,20 +687,41 @@ function renderMasterViewHtml(url, allTodos, deletedTodos, keptItems, shareLinks
     const creatorDisplayName = getDisplayName(todo.creatorId || 'unknown');
     const completionInfo = todo.completed ? ` | 由 <strong>${getDisplayName(todo.completedBy)}</strong> 在 ${formatDate(todo.completedAt)} 完成` : '';
     
-    const imageUrlHtml = todo.imageUrl ? `<img src="${todo.imageUrl}" alt="Todo Image" class="w-16 h-16 object-cover rounded-md mr-4">` : '';
+    const imageUrlHtml = todo.imageUrl ? `<a data-fslightbox href="${todo.imageUrl}"><img src="${todo.imageUrl}" alt="Todo Image" class="w-16 h-16 object-cover rounded-md mr-4"></a>` : '';
+
+    const associatedItems = keptItems.filter(item => item.todoId === todo.id);
+    const associatedItemsHtml = associatedItems.map(item => {
+        const keepersDisplay = Array.isArray(item.keepers) ? item.keepers.join(', ') : item.keepers;
+        const itemImageUrlHtml = item.imageUrl ? `<a data-fslightbox href="${item.imageUrl}"><img src="${item.imageUrl}" alt="Item Image" class="w-12 h-12 object-cover rounded-md mr-3"></a>` : '';
+        return `
+          <div data-id="${item.id}" class="flex items-center" style="padding-left: 60px; padding-top: 10px;">
+            <i data-lucide="package" class="w-4 h-4 text-purple-600 mr-2"></i>
+            ${itemImageUrlHtml}
+            <div class="flex-grow">
+              <label class="font-semibold text-gray-700">${item.name}</label>
+              <div class="meta-info">保管人: <strong>${keepersDisplay}</strong> | ${formatDate(item.createdAt)}</div>
+            </div>
+            <button class="delete-btn" style="padding: 2px 6px; font-size: 12px;" onclick="deleteItem('${item.id}')">删除</button>
+          </div>
+        `;
+    }).join('');
+
     return `
-    <li data-id="${todo.id}" data-owner="${todo.ownerId}" class="todo-item flex items-center p-4 bg-white rounded-lg shadow-sm ${todo.completed ? 'completed' : ''}">
-      <input type="checkbox" id="todo-${todo.id}" ${todo.completed ? 'checked' : ''} onchange="toggleTodo('${todo.id}', this.checked, '${todo.ownerId}')" class="mr-4 w-6 h-6 text-blue-600 bg-gray-100 border-gray-300 rounded focus:ring-blue-500">
-      ${imageUrlHtml}
-      <div class="flex-grow">
-        <label for="todo-${todo.id}" class="text-2xl font-medium text-gray-800">${todo.text}</label>
-        <div class="meta-info text-sm text-gray-500">由 <strong>${creatorDisplayName}</strong> 在 ${formatDate(todo.createdAt)} 创建${ownerInfo}${completionInfo}</div>
+    <li data-id="${todo.id}" data-owner="${todo.ownerId}" class="p-4 bg-white rounded-lg shadow-sm ${todo.completed ? 'completed' : ''}">
+      <div class="flex items-center">
+        <input type="checkbox" id="todo-${todo.id}" ${todo.completed ? 'checked' : ''} onchange="toggleTodo('${todo.id}', this.checked, '${todo.ownerId}')" class="mr-4 w-6 h-6 text-blue-600 bg-gray-100 border-gray-300 rounded focus:ring-blue-500">
+        ${imageUrlHtml}
+        <div class="flex-grow">
+          <label for="todo-${todo.id}" class="text-2xl font-medium text-gray-800">${todo.text}</label>
+          <div class="meta-info text-sm text-gray-500">由 <strong>${creatorDisplayName}</strong> 在 ${formatDate(todo.createdAt)} 创建${ownerInfo}${completionInfo}</div>
+        </div>
+        <div class="flex items-center space-x-2 ml-auto">
+          <button class="delete-btn bg-red-500 hover:bg-red-600 text-white font-bold py-2 px-4 rounded-lg text-sm" onclick="deleteTodo('${todo.id}', '${todo.ownerId}')">
+            删除
+          </button>
+        </div>
       </div>
-      <div class="flex items-center space-x-2 ml-auto">
-        <button class="delete-btn bg-red-500 hover:bg-red-600 text-white font-bold py-2 px-4 rounded-lg text-sm" onclick="deleteTodo('${todo.id}', '${todo.ownerId}')">
-          删除
-        </button>
-      </div>
+      ${associatedItemsHtml ? `<div class="w-full mt-2">${associatedItemsHtml}</div>` : ''}
     </li>
   `}).join('');
 
@@ -779,10 +800,11 @@ function renderMasterViewHtml(url, allTodos, deletedTodos, keptItems, shareLinks
       </section>`;
   }
 
-  const keptItemsListItems = keptItems.sort((a, b) => new Date(b.createdAt) - new Date(a.createdAt)).map(item => {
+  const unassociatedItems = keptItems.filter(item => !item.todoId);
+  const keptItemsListItems = unassociatedItems.sort((a, b) => new Date(b.createdAt) - new Date(a.createdAt)).map(item => {
     const associatedTodo = allTodos.find(todo => todo.id === item.todoId);
     const todoInfo = associatedTodo ? ` | 关联待办: <strong>${associatedTodo.text}</strong>` : '';
-    const imageUrlHtml = item.imageUrl ? `<img src="${item.imageUrl}" alt="Item Image" class="w-16 h-16 object-cover rounded-md mr-4">` : '';
+    const imageUrlHtml = item.imageUrl ? `<a data-fslightbox href="${item.imageUrl}"><img src="${item.imageUrl}" alt="Item Image" class="w-16 h-16 object-cover rounded-md mr-4"></a>` : '';
     const keepersDisplay = Array.isArray(item.keepers) ? item.keepers.join(', ') : item.keepers;
     return `
       <li data-id="${item.id}" class="todo-item">
@@ -953,6 +975,7 @@ function renderMasterViewHtml(url, allTodos, deletedTodos, keptItems, shareLinks
       <title>全局待办事项清单</title>
       <script src="https://cdn.tailwindcss.com"></script>
       <script src="https://unpkg.com/lucide@latest"></script>
+      <script src="https://cdn.jsdelivr.net/npm/fslightbox@3.4.1/index.min.js"></script>
       <style>
         body {
           background: linear-gradient(135deg, #eef2ff, #f8f9ff, #e0e7ff);
