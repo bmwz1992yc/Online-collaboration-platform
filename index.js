@@ -610,12 +610,12 @@ async function handleAddItem(request, url, env) {
   const referer = request.headers.get('Referer') || url.origin;
   const formData = await request.formData();
   const name = formData.get('name');
-  const keeper = formData.get('keeper');
+  const keepers = formData.getAll('keepers'); // Changed from get('keeper') to getAll('keepers')
   const imageFile = formData.get('image'); // 获取图片文件
   const todoId = formData.get('todoId'); // 获取关联的 todoId
 
-  if (!name || !keeper) {
-    return new Response('Missing "name" or "keeper" in form data', { status: 400 });
+  if (!name || keepers.length === 0) { // Changed from !keeper to keepers.length === 0
+    return new Response('Missing "name" or "keepers" in form data', { status: 400 });
   }
 
   let imageUrl = null;
@@ -631,7 +631,7 @@ async function handleAddItem(request, url, env) {
   const newItem = {
     id: crypto.randomUUID(),
     name: name,
-    keeper: keeper,
+    keepers: keepers, // Changed from keeper to keepers
     todoId: todoId || null, // 存储 todoId
     imageUrl: imageUrl, // 添加图片 URL
     createdAt: new Date().toISOString(),
@@ -776,12 +776,13 @@ function renderMasterViewHtml(url, allTodos, deletedTodos, keptItems, shareLinks
     const associatedTodo = allTodos.find(todo => todo.id === item.todoId);
     const todoInfo = associatedTodo ? ` | 关联待办: <strong>${associatedTodo.text}</strong>` : '';
     const imageUrlHtml = item.imageUrl ? `<img src="${item.imageUrl}" alt="Item Image" class="w-16 h-16 object-cover rounded-md mr-4">` : '';
+    const keepersDisplay = Array.isArray(item.keepers) ? item.keepers.join(', ') : item.keepers;
     return `
       <li data-id="${item.id}" class="todo-item">
         ${imageUrlHtml}
         <div class="flex-grow">
           <label>${item.name}</label>
-          <div class="meta-info">保管人: <strong>${item.keeper}</strong> 在 ${formatDate(item.createdAt)} 保管${todoInfo}</div>
+          <div class="meta-info">保管人: <strong>${keepersDisplay}</strong> 在 ${formatDate(item.createdAt)} 保管${todoInfo}</div>
         </div>
         <button class="delete-btn" onclick="deleteItem('${item.id}')">×</button>
       </li>
@@ -867,7 +868,7 @@ function renderMasterViewHtml(url, allTodos, deletedTodos, keptItems, shareLinks
 
           const formData = new FormData();
           formData.append('name', name);
-          keeper.forEach(k => formData.append('keeper', k));
+          keeper.forEach(k => formData.append('keepers', k));
           formData.append('todoId', todoId);
           if (imageFile) {
             formData.append('image', imageFile);
