@@ -718,11 +718,31 @@ async function handleTransferItem(request, url, env) {
     return new Response('Item not found', { status: 404 });
   }
 
-  keptItems[itemIndex].keepers.push({
-    userIds: newKeepers,
-    timestamp: new Date().toISOString(),
-    transferredBy: transferrerId
-  });
+  const item = keptItems[itemIndex];
+  const isNewDataModel = item.keepers && typeof item.keepers[0] === 'object';
+
+  if (isNewDataModel) {
+      item.keepers.push({
+          userIds: newKeepers,
+          timestamp: new Date().toISOString(),
+          transferredBy: transferrerId
+      });
+  } else {
+      // It's an old item. Convert it.
+      const oldKeepers = item.keepers; // This is an array of strings
+      item.keepers = [
+          {
+              userIds: oldKeepers,
+              timestamp: item.createdAt, // Use the item's creation time as a baseline
+              transferredBy: 'unknown' // We don't know who created it
+          },
+          {
+              userIds: newKeepers,
+              timestamp: new Date().toISOString(),
+              transferredBy: transferrerId
+          }
+      ];
+  }
 
   await saveKeptItems(env, keptItems);
 
@@ -758,30 +778,54 @@ function renderMasterViewHtml(url, allTodos, deletedTodos, keptItems, shareLinks
 
     const associatedItems = keptItems.filter(item => item.todoId === todo.id);
     const associatedItemsHtml = associatedItems.map(item => {
-        const currentKeeperInfo = item.keepers[item.keepers.length - 1];
-        const keepersDisplay = currentKeeperInfo.userIds.map(getDisplayName).join(', ');
-        const transferHistoryHtml = item.keepers.length > 1 ? `
-            <ul class="text-xs text-gray-500 mt-2 pl-5 list-disc">
-                ${item.keepers.slice(0, -1).reverse().map(log => `
-                    <li>${log.userIds.map(getDisplayName).join(', ')} (on ${formatDate(log.timestamp)} by ${getDisplayName(log.transferredBy)})</li>
-                `).join('')}
-            </ul>
-        ` : '';
+        const isNewDataModel = item.keepers && typeof item.keepers[0] === 'object';
+        let itemHtml = '';
+
+        if (isNewDataModel) {
+            const currentKeeperInfo = item.keepers[item.keepers.length - 1];
+            const keepersDisplay = currentKeeperInfo.userIds.map(getDisplayName).join(', ');
+            const transferHistoryHtml = item.keepers.length > 1 ? `
+                <ul class="text-xs text-gray-500 mt-2 pl-5 list-disc">
+                    ${item.keepers.slice(0, -1).reverse().map(log => `
+                        <li>${log.userIds.map(getDisplayName).join(', ')} (on ${formatDate(log.timestamp)} by ${getDisplayName(log.transferredBy)})</li>
+                    `).join('')}
+                </ul>
+            ` : '';
+            const itemImageUrlHtml = item.imageUrl ? `<a data-fslightbox href="${item.imageUrl}"><img src="${item.imageUrl}" alt="Item Image" class="w-12 h-12 object-cover rounded-md mr-3"></a>` : '';
+
+            itemHtml = `
+              <div class="flex-grow">
+                <label class="font-semibold text-gray-700">${item.name}</label>
+                <div class="meta-info">Current Keeper(s): <strong>${keepersDisplay}</strong> (since ${formatDate(currentKeeperInfo.timestamp)})</div>
+                ${transferHistoryHtml}
+              </div>
+              <div class="flex flex-col space-y-1 ml-2">
+                  <button class="bg-blue-500 text-white px-2 py-1 text-xs rounded" onclick="showTransferModal('${item.id}')">Transfer</button>
+                  <button class="delete-btn" style="padding: 2px 6px; font-size: 12px;" onclick="deleteItem('${item.id}')">Delete</button>
+              </div>
+            `;
+        } else {
+            // Fallback for old data model
+            const keepersDisplay = Array.isArray(item.keepers) ? item.keepers.map(getDisplayName).join(', ') : '';
+            itemHtml = `
+              <div class="flex-grow">
+                <label class="font-semibold text-gray-700">${item.name}</label>
+                <div class="meta-info">Keeper(s): <strong>${keepersDisplay}</strong></div>
+                <div class="text-xs text-red-500">Note: This item uses an old data format. Please transfer it to update.</div>
+              </div>
+              <div class="flex flex-col space-y-1 ml-2">
+                  <button class="bg-blue-500 text-white px-2 py-1 text-xs rounded" onclick="showTransferModal('${item.id}')">Transfer</button>
+                  <button class="delete-btn" style="padding: 2px 6px; font-size: 12px;" onclick="deleteItem('${item.id}')">Delete</button>
+              </div>
+            `;
+        }
 
         const itemImageUrlHtml = item.imageUrl ? `<a data-fslightbox href="${item.imageUrl}"><img src="${item.imageUrl}" alt="Item Image" class="w-12 h-12 object-cover rounded-md mr-3"></a>` : '';
         return `
           <div data-id="${item.id}" class="flex items-start" style="padding-left: 60px; padding-top: 10px;">
             <i data-lucide="package" class="w-4 h-4 text-purple-600 mr-2 mt-1"></i>
             ${itemImageUrlHtml}
-            <div class="flex-grow">
-              <label class="font-semibold text-gray-700">${item.name}</label>
-              <div class="meta-info">Current Keeper(s): <strong>${keepersDisplay}</strong> (since ${formatDate(currentKeeperInfo.timestamp)})</div>
-              ${transferHistoryHtml}
-            </div>
-            <div class="flex flex-col space-y-1 ml-2">
-                <button class="bg-blue-500 text-white px-2 py-1 text-xs rounded" onclick="showTransferModal('${item.id}')">Transfer</button>
-                <button class="delete-btn" style="padding: 2px 6px; font-size: 12px;" onclick="deleteItem('${item.id}')">Delete</button>
-            </div>
+            ${itemHtml}
           </div>
         `;
     }).join('');
@@ -882,29 +926,50 @@ function renderMasterViewHtml(url, allTodos, deletedTodos, keptItems, shareLinks
 
   const unassociatedItems = keptItems.filter(item => !item.todoId);
   const keptItemsListItems = unassociatedItems.sort((a, b) => new Date(b.createdAt) - new Date(a.createdAt)).map(item => {
-    const currentKeeperInfo = item.keepers[item.keepers.length - 1];
-    const keepersDisplay = currentKeeperInfo.userIds.map(getDisplayName).join(', ');
-    const transferHistoryHtml = item.keepers.length > 1 ? `
-        <ul class="text-xs text-gray-500 mt-2 pl-5 list-disc">
-            ${item.keepers.slice(0, -1).reverse().map(log => `
-                <li>${log.userIds.map(getDisplayName).join(', ')} (on ${formatDate(log.timestamp)} by ${getDisplayName(log.transferredBy)})</li>
-            `).join('')}
-        </ul>
-    ` : '';
+    const isNewDataModel = item.keepers && typeof item.keepers[0] === 'object';
+    let itemHtml = '';
+
+    if (isNewDataModel) {
+        const currentKeeperInfo = item.keepers[item.keepers.length - 1];
+        const keepersDisplay = currentKeeperInfo.userIds.map(getDisplayName).join(', ');
+        const transferHistoryHtml = item.keepers.length > 1 ? `
+            <ul class="text-xs text-gray-500 mt-2 pl-5 list-disc">
+                ${item.keepers.slice(0, -1).reverse().map(log => `
+                    <li>${log.userIds.map(getDisplayName).join(', ')} (on ${formatDate(log.timestamp)} by ${getDisplayName(log.transferredBy)})</li>
+                `).join('')}
+            </ul>
+        ` : '';
+        itemHtml = `
+            <div class="flex-grow">
+              <label>${item.name}</label>
+              <div class="meta-info">Current Keeper(s): <strong>${keepersDisplay}</strong> (since ${formatDate(currentKeeperInfo.timestamp)})</div>
+              ${transferHistoryHtml}
+            </div>
+            <div class="flex flex-col space-y-1 ml-2">
+                <button class="bg-blue-500 text-white px-2 py-1 text-xs rounded" onclick="showTransferModal('${item.id}')">Transfer</button>
+                <button class="delete-btn" onclick="deleteItem('${item.id}')">×</button>
+            </div>
+        `;
+    } else {
+        const keepersDisplay = Array.isArray(item.keepers) ? item.keepers.map(getDisplayName).join(', ') : '';
+        itemHtml = `
+            <div class="flex-grow">
+              <label>${item.name}</label>
+              <div class="meta-info">Keeper(s): <strong>${keepersDisplay}</strong></div>
+              <div class="text-xs text-red-500">Note: This item uses an old data format. Please transfer it to update.</div>
+            </div>
+            <div class="flex flex-col space-y-1 ml-2">
+                <button class="bg-blue-500 text-white px-2 py-1 text-xs rounded" onclick="showTransferModal('${item.id}')">Transfer</button>
+                <button class="delete-btn" onclick="deleteItem('${item.id}')">×</button>
+            </div>
+        `;
+    }
 
     const imageUrlHtml = item.imageUrl ? `<a data-fslightbox href="${item.imageUrl}"><img src="${item.imageUrl}" alt="Item Image" class="w-16 h-16 object-cover rounded-md mr-4"></a>` : '';
     return `
       <li data-id="${item.id}" class="todo-item">
         ${imageUrlHtml}
-        <div class="flex-grow">
-          <label>${item.name}</label>
-          <div class="meta-info">Current Keeper(s): <strong>${keepersDisplay}</strong> (since ${formatDate(currentKeeperInfo.timestamp)})</div>
-          ${transferHistoryHtml}
-        </div>
-        <div class="flex flex-col space-y-1 ml-2">
-            <button class="bg-blue-500 text-white px-2 py-1 text-xs rounded" onclick="showTransferModal('${item.id}')">Transfer</button>
-            <button class="delete-btn" onclick="deleteItem('${item.id}')">×</button>
-        </div>
+        ${itemHtml}
       </li>
     `;
   }).join('');
