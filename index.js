@@ -787,7 +787,7 @@ function renderMasterViewHtml(url, allTodos, deletedTodos, keptItems, shareLinks
             const transferHistoryHtml = item.keepers.length > 1 ? `
                 <ul class="text-xs text-gray-500 mt-2 pl-5 list-disc">
                     ${item.keepers.slice(0, -1).reverse().map(log => `
-                        <li>${log.userIds.map(getDisplayName).join(', ')} (on ${formatDate(log.timestamp)} by ${getDisplayName(log.transferredBy)})</li>
+                        <li>${log.userIds.map(getDisplayName).join(', ')} (于 ${formatDate(log.timestamp)} 由 ${getDisplayName(log.transferredBy)} 转交)</li>
                     `).join('')}
                 </ul>
             ` : '';
@@ -796,12 +796,12 @@ function renderMasterViewHtml(url, allTodos, deletedTodos, keptItems, shareLinks
             itemHtml = `
               <div class="flex-grow">
                 <label class="font-semibold text-gray-700">${item.name}</label>
-                <div class="meta-info">Current Keeper(s): <strong>${keepersDisplay}</strong> (since ${formatDate(currentKeeperInfo.timestamp)})</div>
+                <div class="meta-info">当前保管人: <strong>${keepersDisplay}</strong> (自 ${formatDate(currentKeeperInfo.timestamp)})</div>
                 ${transferHistoryHtml}
               </div>
               <div class="flex flex-col space-y-1 ml-2">
-                  <button class="bg-blue-500 text-white px-2 py-1 text-xs rounded" onclick="showTransferModal('${item.id}')">Transfer</button>
-                  <button class="delete-btn" style="padding: 2px 6px; font-size: 12px;" onclick="deleteItem('${item.id}')">Delete</button>
+                  <button class="bg-blue-500 text-white px-2 py-1 text-xs rounded" onclick="showTransferModal('${item.id}')">转交</button>
+                  <button class="delete-btn" style="padding: 2px 6px; font-size: 12px;" onclick="deleteItem('${item.id}')">删除</button>
               </div>
             `;
         } else {
@@ -810,12 +810,12 @@ function renderMasterViewHtml(url, allTodos, deletedTodos, keptItems, shareLinks
             itemHtml = `
               <div class="flex-grow">
                 <label class="font-semibold text-gray-700">${item.name}</label>
-                <div class="meta-info">Keeper(s): <strong>${keepersDisplay}</strong></div>
-                <div class="text-xs text-red-500">Note: This item uses an old data format. Please transfer it to update.</div>
+                <div class="meta-info">保管人: <strong>${keepersDisplay}</strong></div>
+                <div class="text-xs text-red-500">注意: 此物品为旧数据格式。请转交一次以更新。</div>
               </div>
               <div class="flex flex-col space-y-1 ml-2">
-                  <button class="bg-blue-500 text-white px-2 py-1 text-xs rounded" onclick="showTransferModal('${item.id}')">Transfer</button>
-                  <button class="delete-btn" style="padding: 2px 6px; font-size: 12px;" onclick="deleteItem('${item.id}')">Delete</button>
+                  <button class="bg-blue-500 text-white px-2 py-1 text-xs rounded" onclick="showTransferModal('${item.id}')">转交</button>
+                  <button class="delete-btn" style="padding: 2px 6px; font-size: 12px;" onclick="deleteItem('${item.id}')">删除</button>
               </div>
             `;
         }
@@ -935,18 +935,18 @@ function renderMasterViewHtml(url, allTodos, deletedTodos, keptItems, shareLinks
         const transferHistoryHtml = item.keepers.length > 1 ? `
             <ul class="text-xs text-gray-500 mt-2 pl-5 list-disc">
                 ${item.keepers.slice(0, -1).reverse().map(log => `
-                    <li>${log.userIds.map(getDisplayName).join(', ')} (on ${formatDate(log.timestamp)} by ${getDisplayName(log.transferredBy)})</li>
+                    <li>${log.userIds.map(getDisplayName).join(', ')} (于 ${formatDate(log.timestamp)} 由 ${getDisplayName(log.transferredBy)} 转交)</li>
                 `).join('')}
             </ul>
         ` : '';
         itemHtml = `
             <div class="flex-grow">
               <label>${item.name}</label>
-              <div class="meta-info">Current Keeper(s): <strong>${keepersDisplay}</strong> (since ${formatDate(currentKeeperInfo.timestamp)})</div>
+              <div class="meta-info">当前保管人: <strong>${keepersDisplay}</strong> (自 ${formatDate(currentKeeperInfo.timestamp)})</div>
               ${transferHistoryHtml}
             </div>
             <div class="flex flex-col space-y-1 ml-2">
-                <button class="bg-blue-500 text-white px-2 py-1 text-xs rounded" onclick="showTransferModal('${item.id}')">Transfer</button>
+                <button class="bg-blue-500 text-white px-2 py-1 text-xs rounded" onclick="showTransferModal('${item.id}')">转交</button>
                 <button class="delete-btn" onclick="deleteItem('${item.id}')">×</button>
             </div>
         `;
@@ -955,11 +955,11 @@ function renderMasterViewHtml(url, allTodos, deletedTodos, keptItems, shareLinks
         itemHtml = `
             <div class="flex-grow">
               <label>${item.name}</label>
-              <div class="meta-info">Keeper(s): <strong>${keepersDisplay}</strong></div>
-              <div class="text-xs text-red-500">Note: This item uses an old data format. Please transfer it to update.</div>
+              <div class="meta-info">保管人: <strong>${keepersDisplay}</strong></div>
+              <div class="text-xs text-red-500">注意: 此物品为旧数据格式。请转交一次以更新。</div>
             </div>
             <div class="flex flex-col space-y-1 ml-2">
-                <button class="bg-blue-500 text-white px-2 py-1 text-xs rounded" onclick="showTransferModal('${item.id}')">Transfer</button>
+                <button class="bg-blue-500 text-white px-2 py-1 text-xs rounded" onclick="showTransferModal('${item.id}')">转交</button>
                 <button class="delete-btn" onclick="deleteItem('${item.id}')">×</button>
             </div>
         `;
@@ -984,7 +984,7 @@ function renderMasterViewHtml(url, allTodos, deletedTodos, keptItems, shareLinks
           headers: { 'Content-Type': 'application/json' },
           body: JSON.stringify({ id, completed: isChecked, ownerId }),
         });
-        if (!response.ok) throw new Error('Update failed');
+        if (!response.ok) throw new Error('更新失败');
         
         // Dynamic DOM update
         const todoItem = document.querySelector(\`li[data-id='\${id}']\`);
@@ -999,7 +999,7 @@ function renderMasterViewHtml(url, allTodos, deletedTodos, keptItems, shareLinks
         }
       } catch (error) {
         console.error("Update failed:", error);
-        alert('Update failed, please try again.');
+        alert('更新失败，请重试。');
       }
     }
 
@@ -1011,7 +1011,7 @@ function renderMasterViewHtml(url, allTodos, deletedTodos, keptItems, shareLinks
           headers: { 'Content-Type': 'application/json' },
           body: JSON.stringify({ id, ownerId }),
         });
-        if (!response.ok) throw new Error('Delete failed');
+        if (!response.ok) throw new Error('删除失败');
         
         // Dynamic DOM update
         const todoItem = document.querySelector(\`li[data-id='\${id}']\`);
@@ -1020,7 +1020,7 @@ function renderMasterViewHtml(url, allTodos, deletedTodos, keptItems, shareLinks
         }
       } catch (error) {
         console.error("Delete failed:", error);
-        alert('Delete failed, please try again.');
+        alert('删除失败，请重试。');
       }
     }
 
@@ -1032,11 +1032,11 @@ function renderMasterViewHtml(url, allTodos, deletedTodos, keptItems, shareLinks
           headers: { 'Content-Type': 'application/json' },
           body: JSON.stringify({ token }),
         });
-        if (!response.ok) throw new Error('Delete user failed');
+        if (!response.ok) throw new Error('删除用户失败');
         window.location.reload();
       } catch (error) {
         console.error("Delete user failed:", error);
-        alert('Delete user failed, please try again.');
+        alert('删除用户失败，请重试。');
       }
     }
 
@@ -1064,11 +1064,11 @@ function renderMasterViewHtml(url, allTodos, deletedTodos, keptItems, shareLinks
               method: 'POST',
               body: formData,
             });
-            if (!response.ok) throw new Error('Add item failed');
+            if (!response.ok) throw new Error('添加物品失败');
             window.location.reload();
           } catch (error) {
             console.error("Add item failed:", error);
-            alert('Add item failed, please try again.');
+            alert('添加物品失败，请重试。');
           }
         });
       }
@@ -1081,7 +1081,7 @@ function renderMasterViewHtml(url, allTodos, deletedTodos, keptItems, shareLinks
               const newKeepers = Array.from(transferForm.querySelectorAll('input[name="newKeepers"]:checked')).map(cb => cb.value);
 
               if (newKeepers.length === 0) {
-                  alert('Please select at least one new keeper.');
+                  alert('请至少选择一位新保管人。');
                   return;
               }
 
@@ -1096,7 +1096,7 @@ function renderMasterViewHtml(url, allTodos, deletedTodos, keptItems, shareLinks
                   });
                   if (!response.ok) {
                       const errorText = await response.text();
-                      throw new Error('Transfer failed: ' + errorText);
+                      throw new Error('转交失败: ' + errorText);
                   }
                   window.location.reload();
               } catch (error) {
@@ -1128,11 +1128,11 @@ function renderMasterViewHtml(url, allTodos, deletedTodos, keptItems, shareLinks
               method: 'POST',
               body: formData,
             });
-            if (!response.ok) throw new Error('Add todo failed');
+            if (!response.ok) throw new Error('添加事项失败');
             window.location.reload();
           } catch (error) {
             console.error("Add todo failed:", error);
-            alert('Add todo failed, please try again.');
+            alert('添加事项失败，请重试。');
           }
         });
       }
@@ -1146,11 +1146,11 @@ function renderMasterViewHtml(url, allTodos, deletedTodos, keptItems, shareLinks
           headers: { 'Content-Type': 'application/json' },
           body: JSON.stringify({ id }),
         });
-        if (!response.ok) throw new Error('Delete item failed');
+        if (!response.ok) throw new Error('删除物品失败');
         window.location.reload();
       } catch (error) {
         console.error("Delete item failed:", error);
-        alert('Delete item failed, please try again.');
+        alert('删除物品失败，请重试。');
       }
     }
 
@@ -1238,7 +1238,7 @@ function renderMasterViewHtml(url, allTodos, deletedTodos, keptItems, shareLinks
                   <label class="flex items-center space-x-2">
                     <input type="checkbox" name="userIds" value="public"
                            class="rounded border-gray-300 text-blue-600 focus:ring-blue-300" />
-                    <span>Public (无指定用户)</span>
+                    <span>公共 (无指定用户)</span>
                   </label>
                   ${userOptions}
                 </div>
@@ -1265,7 +1265,7 @@ function renderMasterViewHtml(url, allTodos, deletedTodos, keptItems, shareLinks
                   <label class="flex items-center space-x-2">
                     <input type="checkbox" name="itemUserIds" value="public"
                            class="rounded border-gray-300 text-purple-600 focus:ring-purple-300" />
-                    <span>Public (无指定用户)</span>
+                    <span>公共 (无指定用户)</span>
                   </label>
                   ${itemUserOptions}
                 </div>
@@ -1325,18 +1325,18 @@ function renderMasterViewHtml(url, allTodos, deletedTodos, keptItems, shareLinks
       <!-- Transfer Item Modal -->
       <div id="transfer-modal" class="fixed inset-0 bg-gray-800 bg-opacity-50 flex items-center justify-center" style="display: none;">
         <div class="bg-white rounded-lg p-6 w-full max-w-md">
-          <h2 class="text-xl font-bold mb-4">Transfer Item</h2>
+          <h2 class="text-xl font-bold mb-4">转交物品</h2>
           <form id="transfer-item-form">
             <input type="hidden" id="transfer-item-id" name="itemId">
             <div class="p-3 bg-gray-50 border rounded-lg">
-              <h3 class="text-sm font-semibold mb-1 text-gray-700">Transfer to (select new keeper/s)</h3>
+              <h3 class="text-sm font-semibold mb-1 text-gray-700">转交给 (选择新保管人)</h3>
               <div id="transfer-keeper-checkboxes" class="space-y-1 max-h-32 overflow-y-auto text-sm">
                 <!-- User checkboxes will be dynamically inserted here -->
               </div>
             </div>
             <div class="flex justify-end space-x-2 mt-4">
-              <button type="button" onclick="closeTransferModal()" class="bg-gray-300 px-4 py-2 rounded-lg">Cancel</button>
-              <button type="submit" class="bg-blue-600 text-white px-4 py-2 rounded-lg">Confirm Transfer</button>
+              <button type="button" onclick="closeTransferModal()" class="bg-gray-300 px-4 py-2 rounded-lg">取消</button>
+              <button type="submit" class="bg-blue-600 text-white px-4 py-2 rounded-lg">确认转交</button>
             </div>
           </form>
         </div>
