@@ -405,6 +405,9 @@ async function handleRequest(request, env, ctx) {
   if (request.method === 'DELETE' && pathSegment === 'delete_item') { // 删除物品保管路由
     return handleDeleteItem(request, env);
   }
+  if (request.method === 'POST' && pathSegment === 'transfer_item') {
+    return handleTransferItem(request, url, env);
+  }
 
   if (request.method === 'GET' && pathSegment === 'images') {
     const imageKey = pathname.substring(1);
@@ -628,32 +631,42 @@ async function handleAddItem(request, url, env) {
   const referer = request.headers.get('Referer') || url.origin;
   const formData = await request.formData();
   const name = formData.get('name');
-  const keepers = formData.getAll('keepers'); // Changed from get('keeper') to getAll('keepers')
-  const imageFile = formData.get('image'); // 获取图片文件
-  const todoId = formData.get('todoId'); // 获取关联的 todoId
+  const keepers = formData.getAll('keepers');
+  const imageFile = formData.get('image');
+  const todoId = formData.get('todoId');
 
-  if (!name || keepers.length === 0) { // Changed from !keeper to keepers.length === 0
+  if (!name || keepers.length === 0) {
     return new Response('Missing "name" or "keepers" in form data', { status: 400 });
+  }
+
+  const refererPath = new URL(referer).pathname.substring(1).split('/')[0].toLowerCase();
+  const shareLinks = await loadShareLinks(env);
+  let creatorId = 'admin';
+  if (shareLinks[refererPath]) {
+      creatorId = shareLinks[refererPath].username;
   }
 
   let imageUrl = null;
   if (imageFile && imageFile.size > 0) {
-    // Compress image before storing
     const compressedImage = await compressImage(imageFile);
     const imageId = crypto.randomUUID();
     const extension = imageFile.name.split('.').pop();
     const imageKey = `images/${imageId}.${extension}`;
     await env.R2_BUCKET.put(imageKey, compressedImage, { httpMetadata: { contentType: imageFile.type } });
-    imageUrl = `/${imageKey}`; // 存储相对路径
+    imageUrl = `/${imageKey}`;
   }
 
   const newItem = {
     id: crypto.randomUUID(),
     name: name,
-    keepers: keepers, // Changed from keeper to keepers
-    todoId: todoId || null, // 存储 todoId
-    imageUrl: imageUrl, // 添加图片 URL
+    todoId: todoId || null,
+    imageUrl: imageUrl,
     createdAt: new Date().toISOString(),
+    keepers: [{
+        userIds: keepers,
+        timestamp: new Date().toISOString(),
+        transferredBy: creatorId
+    }]
   };
 
   const keptItems = await loadKeptItems(env);
@@ -679,6 +692,41 @@ async function handleDeleteItem(request, env) {
   } else {
     return new Response(JSON.stringify({ error: "Item not found" }), { status: 404 });
   }
+}
+
+async function handleTransferItem(request, url, env) {
+  const referer = request.headers.get('Referer') || url.origin;
+  const formData = await request.formData();
+  const itemId = formData.get('itemId');
+  const newKeepers = formData.getAll('newKeepers');
+
+  if (!itemId || newKeepers.length === 0) {
+    return new Response('Missing itemId or newKeepers in form data', { status: 400 });
+  }
+
+  const refererPath = new URL(referer).pathname.substring(1).split('/')[0].toLowerCase();
+  const shareLinks = await loadShareLinks(env);
+  let transferrerId = 'admin';
+  if (shareLinks[refererPath]) {
+      transferrerId = shareLinks[refererPath].username;
+  }
+
+  const keptItems = await loadKeptItems(env);
+  const itemIndex = keptItems.findIndex(item => item.id === itemId);
+
+  if (itemIndex === -1) {
+    return new Response('Item not found', { status: 404 });
+  }
+
+  keptItems[itemIndex].keepers.push({
+    userIds: newKeepers,
+    timestamp: new Date().toISOString(),
+    transferredBy: transferrerId
+  });
+
+  await saveKeptItems(env, keptItems);
+
+  return Response.redirect(referer, 303);
 }
 
 
@@ -710,17 +758,30 @@ function renderMasterViewHtml(url, allTodos, deletedTodos, keptItems, shareLinks
 
     const associatedItems = keptItems.filter(item => item.todoId === todo.id);
     const associatedItemsHtml = associatedItems.map(item => {
-        const keepersDisplay = Array.isArray(item.keepers) ? item.keepers.join(', ') : item.keepers;
+        const currentKeeperInfo = item.keepers[item.keepers.length - 1];
+        const keepersDisplay = currentKeeperInfo.userIds.map(getDisplayName).join(', ');
+        const transferHistoryHtml = item.keepers.length > 1 ? `
+            <ul class="text-xs text-gray-500 mt-2 pl-5 list-disc">
+                ${item.keepers.slice(0, -1).reverse().map(log => `
+                    <li>${log.userIds.map(getDisplayName).join(', ')} (on ${formatDate(log.timestamp)} by ${getDisplayName(log.transferredBy)})</li>
+                `).join('')}
+            </ul>
+        ` : '';
+
         const itemImageUrlHtml = item.imageUrl ? `<a data-fslightbox href="${item.imageUrl}"><img src="${item.imageUrl}" alt="Item Image" class="w-12 h-12 object-cover rounded-md mr-3"></a>` : '';
         return `
-          <div data-id="${item.id}" class="flex items-center" style="padding-left: 60px; padding-top: 10px;">
-            <i data-lucide="package" class="w-4 h-4 text-purple-600 mr-2"></i>
+          <div data-id="${item.id}" class="flex items-start" style="padding-left: 60px; padding-top: 10px;">
+            <i data-lucide="package" class="w-4 h-4 text-purple-600 mr-2 mt-1"></i>
             ${itemImageUrlHtml}
             <div class="flex-grow">
               <label class="font-semibold text-gray-700">${item.name}</label>
-              <div class="meta-info">保管人: <strong>${keepersDisplay}</strong> | ${formatDate(item.createdAt)}</div>
+              <div class="meta-info">Current Keeper(s): <strong>${keepersDisplay}</strong> (since ${formatDate(currentKeeperInfo.timestamp)})</div>
+              ${transferHistoryHtml}
             </div>
-            <button class="delete-btn" style="padding: 2px 6px; font-size: 12px;" onclick="deleteItem('${item.id}')">删除</button>
+            <div class="flex flex-col space-y-1 ml-2">
+                <button class="bg-blue-500 text-white px-2 py-1 text-xs rounded" onclick="showTransferModal('${item.id}')">Transfer</button>
+                <button class="delete-btn" style="padding: 2px 6px; font-size: 12px;" onclick="deleteItem('${item.id}')">Delete</button>
+            </div>
           </div>
         `;
     }).join('');
@@ -821,18 +882,29 @@ function renderMasterViewHtml(url, allTodos, deletedTodos, keptItems, shareLinks
 
   const unassociatedItems = keptItems.filter(item => !item.todoId);
   const keptItemsListItems = unassociatedItems.sort((a, b) => new Date(b.createdAt) - new Date(a.createdAt)).map(item => {
-    const associatedTodo = allTodos.find(todo => todo.id === item.todoId);
-    const todoInfo = associatedTodo ? ` | 关联待办: <strong>${associatedTodo.text}</strong>` : '';
+    const currentKeeperInfo = item.keepers[item.keepers.length - 1];
+    const keepersDisplay = currentKeeperInfo.userIds.map(getDisplayName).join(', ');
+    const transferHistoryHtml = item.keepers.length > 1 ? `
+        <ul class="text-xs text-gray-500 mt-2 pl-5 list-disc">
+            ${item.keepers.slice(0, -1).reverse().map(log => `
+                <li>${log.userIds.map(getDisplayName).join(', ')} (on ${formatDate(log.timestamp)} by ${getDisplayName(log.transferredBy)})</li>
+            `).join('')}
+        </ul>
+    ` : '';
+
     const imageUrlHtml = item.imageUrl ? `<a data-fslightbox href="${item.imageUrl}"><img src="${item.imageUrl}" alt="Item Image" class="w-16 h-16 object-cover rounded-md mr-4"></a>` : '';
-    const keepersDisplay = Array.isArray(item.keepers) ? item.keepers.join(', ') : item.keepers;
     return `
       <li data-id="${item.id}" class="todo-item">
         ${imageUrlHtml}
         <div class="flex-grow">
           <label>${item.name}</label>
-          <div class="meta-info">保管人: <strong>${keepersDisplay}</strong> 在 ${formatDate(item.createdAt)} 保管${todoInfo}</div>
+          <div class="meta-info">Current Keeper(s): <strong>${keepersDisplay}</strong> (since ${formatDate(currentKeeperInfo.timestamp)})</div>
+          ${transferHistoryHtml}
         </div>
-        <button class="delete-btn" onclick="deleteItem('${item.id}')">×</button>
+        <div class="flex flex-col space-y-1 ml-2">
+            <button class="bg-blue-500 text-white px-2 py-1 text-xs rounded" onclick="showTransferModal('${item.id}')">Transfer</button>
+            <button class="delete-btn" onclick="deleteItem('${item.id}')">×</button>
+        </div>
       </li>
     `;
   }).join('');
@@ -936,6 +1008,39 @@ function renderMasterViewHtml(url, allTodos, deletedTodos, keptItems, shareLinks
         });
       }
 
+      const transferForm = document.getElementById('transfer-item-form');
+      if(transferForm) {
+          transferForm.addEventListener('submit', async (e) => {
+              e.preventDefault();
+              const itemId = document.getElementById('transfer-item-id').value;
+              const newKeepers = Array.from(transferForm.querySelectorAll('input[name="newKeepers"]:checked')).map(cb => cb.value);
+
+              if (newKeepers.length === 0) {
+                  alert('Please select at least one new keeper.');
+                  return;
+              }
+
+              const formData = new FormData();
+              formData.append('itemId', itemId);
+              newKeepers.forEach(k => formData.append('newKeepers', k));
+
+              try {
+                  const response = await fetch('/transfer_item', {
+                      method: 'POST',
+                      body: formData,
+                  });
+                  if (!response.ok) {
+                      const errorText = await response.text();
+                      throw new Error(`Transfer failed: ${errorText}`);
+                  }
+                  window.location.reload();
+              } catch (error) {
+                  console.error("Transfer failed:", error);
+                  alert(error.message);
+              }
+          });
+      }
+
       const addTodoForm = document.querySelector('form[action="/add_todo"]');
       if (addTodoForm) {
         addTodoForm.addEventListener('submit', async (e) => {
@@ -982,6 +1087,34 @@ function renderMasterViewHtml(url, allTodos, deletedTodos, keptItems, shareLinks
         console.error("Delete item failed:", error);
         alert('Delete item failed, please try again.');
       }
+    }
+
+    function showTransferModal(itemId) {
+        const modal = document.getElementById('transfer-modal');
+        document.getElementById('transfer-item-id').value = itemId;
+
+        const container = document.getElementById('transfer-keeper-checkboxes');
+        container.innerHTML = ''; // Clear old checkboxes
+
+        const allUsers = ${JSON.stringify(Object.values(shareLinks).map(l => l.username))};
+        allUsers.push('public');
+
+        allUsers.forEach(user => {
+            const label = document.createElement('label');
+            label.className = 'flex items-center space-x-2';
+            label.innerHTML = `
+                <input type="checkbox" name="newKeepers" value="${user}" class="rounded border-gray-300 text-blue-600 focus:ring-blue-300">
+                <span>${user === 'admin' ? 'yc' : user}</span>
+            `;
+            container.appendChild(label);
+        });
+
+        modal.style.display = 'flex';
+    }
+
+    function closeTransferModal() {
+        const modal = document.getElementById('transfer-modal');
+        modal.style.display = 'none';
     }
   `;
 
@@ -1125,6 +1258,26 @@ function renderMasterViewHtml(url, allTodos, deletedTodos, keptItems, shareLinks
       <script>
         ${clientScript}
       </script>
+
+      <!-- Transfer Item Modal -->
+      <div id="transfer-modal" class="fixed inset-0 bg-gray-800 bg-opacity-50 flex items-center justify-center" style="display: none;">
+        <div class="bg-white rounded-lg p-6 w-full max-w-md">
+          <h2 class="text-xl font-bold mb-4">Transfer Item</h2>
+          <form id="transfer-item-form">
+            <input type="hidden" id="transfer-item-id" name="itemId">
+            <div class="p-3 bg-gray-50 border rounded-lg">
+              <h3 class="text-sm font-semibold mb-1 text-gray-700">Transfer to (select new keeper/s)</h3>
+              <div id="transfer-keeper-checkboxes" class="space-y-1 max-h-32 overflow-y-auto text-sm">
+                <!-- User checkboxes will be dynamically inserted here -->
+              </div>
+            </div>
+            <div class="flex justify-end space-x-2 mt-4">
+              <button type="button" onclick="closeTransferModal()" class="bg-gray-300 px-4 py-2 rounded-lg">Cancel</button>
+              <button type="submit" class="bg-blue-600 text-white px-4 py-2 rounded-lg">Confirm Transfer</button>
+            </div>
+          </form>
+        </div>
+      </div>
     </body>
     </html>
   `;
